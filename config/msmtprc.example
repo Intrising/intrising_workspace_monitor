@@ -1,0 +1,41 @@
+# msmtp 配置文件示例
+# 将此文件复制为 msmtprc 并修改配置
+
+# 默认设置
+defaults
+auth           on
+tls            on
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+logfile        /var/log/pr-monitor/msmtp.log
+
+# Gmail 配置示例
+account        gmail
+host           smtp.gmail.com
+port           587
+from           your-email@gmail.com
+user           your-email@gmail.com
+password       your-app-password
+# 或使用 passwordeval 从外部命令读取密码
+# passwordeval   "cat /run/secrets/gmail_password"
+
+# Outlook/Office365 配置示例
+account        outlook
+host           smtp.office365.com
+port           587
+from           your-email@outlook.com
+user           your-email@outlook.com
+password       your-password
+
+# 自定义 SMTP 服务器配置示例
+account        custom
+host           smtp.your-domain.com
+port           587
+from           noreply@your-domain.com
+user           smtp-user
+password       smtp-password
+
+# 如果不需要 TLS（不推荐）
+# tls            off
+
+# 设置默认账户
+account default : gmail

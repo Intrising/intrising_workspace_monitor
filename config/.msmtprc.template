@@ -1,0 +1,18 @@
+# msmtp 配置文件 - 生产环境模板
+# 使用环境变量配置
+
+defaults
+auth           on
+tls            on
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+logfile        /var/log/pr-monitor/msmtp.log
+
+# 主账户配置
+account        default
+host           ${SMTP_HOST}
+port           ${SMTP_PORT}
+from           ${EMAIL_FROM}
+user           ${SMTP_USER}
+# 密码将从环境变量或 Docker secrets 读取
+# 在 Docker 中可以使用 passwordeval 从文件读取
+# passwordeval   "cat /run/secrets/smtp_password"

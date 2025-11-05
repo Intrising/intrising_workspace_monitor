@@ -1,0 +1,45 @@
+version: '3.8'
+
+# 開發環境 Docker Compose 配置
+# 使用方式: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  github-monitor:
+    # 本地構建
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+
+    # 開發環境標籤
+    image: github-monitor:dev
+    container_name: github-monitor-dev
+
+    # 開發環境重啟策略
+    restart: "no"
+
+    # 較寬鬆的資源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+    # 開發環境變數覆蓋
+    environment:
+      - LOG_LEVEL=DEBUG
+      - CHECK_INTERVAL=60
+
+    # 掛載源代碼（支持熱重載）
+    volumes:
+      - ./pr_monitor.py:/app/pr_monitor.py:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/var/log/github-monitor
+
+    # 關閉只讀限制（方便開發）
+    read_only: false
+
+    # 開發環境標籤
+    labels:
+      - "com.example.environment=development"
+      - "com.example.service=github-monitor"

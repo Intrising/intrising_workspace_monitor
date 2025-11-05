@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  pr-reviewer-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile.claude
+    image: github-pr-reviewer-cli:latest
+    container_name: pr-reviewer-cli
+    restart: unless-stopped
+
+    # 運行 PR 審查服務（使用 Claude CLI）
+    command: python3 pr_reviewer.py
+
+    env_file:
+      - .env
+
+    ports:
+      - "${WEBHOOK_PORT:-8080}:8080"
+
+    volumes:
+      - ./pr_reviewer.py:/app/pr_reviewer.py:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - pr-reviewer-logs:/var/log/github-monitor
+      # 掛載主機的 Claude 認證配置（需要可寫以記錄 debug 日誌）
+      - ${HOME}/.claude:/home/appuser/.claude
+      # 掛載 msmtp 配置文件
+      - ./.msmtprc:/home/appuser/.msmtprc:ro
+
+    networks:
+      - pr-reviewer-network
+
+    # 保持容器運行，允許進入容器進行認證
+    tty: true
+    stdin_open: true
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  pr-reviewer-logs:
+
+networks:
+  pr-reviewer-network:
+    driver: bridge

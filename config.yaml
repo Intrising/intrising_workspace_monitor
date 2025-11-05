@@ -1,0 +1,141 @@
+# GitHub Monitor Configuration
+monitor:
+  # 檢查間隔（秒）
+  check_interval: 300  # 5分鐘
+
+  # 要監控的儲存庫列表
+  repositories:
+    # 監控 Intrising 組織下的所有儲存庫
+    - owner: "Intrising"
+      all: true  # 設置為 true 表示監控該組織下所有儲存庫
+      branches: []  # 空列表 = 監控所有分支的 PR
+
+  # PR 狀態過濾
+  pr_states:
+    - open
+
+  # 警報條件
+  alerts:
+    # PR 開啟超過多少小時發送警報
+    open_duration_hours: 24
+    # 沒有 reviewer 的 PR
+    no_reviewer: true
+    # 有衝突的 PR
+    has_conflicts: true
+    # CI 失敗的 PR
+    ci_failed: true
+
+# 通知設定
+notifications:
+  # Slack 通知
+  slack:
+    enabled: true
+    # Webhook URL 從環境變數讀取
+    # channel: "#pr-alerts"
+
+  # Email 通知（使用 msmtp）
+  email:
+    enabled: true
+    # 收件人列表（固定收件人）
+    recipients:
+      - "khkh@intrising.com.tw"
+    # 是否自動加入 PR 作者的 email
+    include_pr_author: true
+    # 是否自動加入 PR 審查者的 email
+    include_reviewers: false
+    # 是否自動加入 PR 分配者的 email
+    include_assignees: false
+    # msmtp 配置文件路径（可选，默认 /etc/msmtprc）
+    # msmtp_config: "/home/appuser/.msmtprc"
+    # GitHub 用戶名與 email 映射（用於未公開 email 的用戶）
+    user_email_mapping:
+      IS-Andy: "andy@intrising.com.tw"
+      IS-Anson: "anson@intrising.com.tw"
+      IS-BradChiang: "brad@intrising.com.tw"
+      IS-BrianLian: "brianlian@intrising.com.tw"
+      IS-BruceChen: "bruce.chen@intrising.com.tw"
+      IS-Dalaal: "dalaal@intrising.com.tw"
+      IS-Howard: "howard@intrising.com.tw"
+      IS-Jacky: "jacky@intrising.com.tw"
+      IS-Jason: "jason@intrising.com.tw"
+      IS-Ken: "kenlee@intrising.com.tw"
+      IS-KevinHuang: "kevin@intrising.com.tw"
+      IS-KH: "khkh@intrising.com.tw"
+      IS-Kuan: "kuanyen@intrising.com.tw"
+      IS-LilithChang: "lilith.chang@intrising.com.tw"
+      IS-MarsChen: "mars@intrising.com.tw"
+      IS-Martin: "martin@intrising.com.tw"
+      IS-YanShen: "yan@intrising.com.tw"
+      IS-Miranda: "miranda.lin@intrising.com.tw"
+      IS-Morrison: "morrison.lin@intrising.com.tw"
+      IS-Noa: "noa@intrising.com.tw"
+      IS-Roger: "roger@intrising.com.tw"
+
+# 日誌設定
+logging:
+  level: INFO
+  format: "json"  # json or text
+  file: "/var/log/github-monitor/app.log"
+
+# PR 自動審查配置
+review:
+  # 觸發審查的 PR 動作
+  triggers:
+    - opened       # PR 被創建
+    - synchronize  # PR 有新的提交
+    - reopened     # PR 被重新開啟
+
+  # 是否跳過 draft PR
+  skip_draft: true
+
+  # 是否自動添加 "auto-reviewed" 標籤
+  auto_label: true
+
+  # 審查重點關注的方面
+  focus_areas:
+    - "代碼質量和可讀性"
+    - "潛在的 bug 和錯誤處理"
+    - "性能問題和優化建議"
+    - "安全漏洞和最佳實踐"
+    - "測試覆蓋率"
+    - "文檔和注釋完整性"
+
+  # 回覆語言
+  language: "zh-TW"
+
+# Issue 自動複製配置
+issue_copy:
+  # 是否啟用 issue 自動複製功能
+  enabled: true
+
+  # 來源 repository（監控這個 repo 的 issues）
+  source_repo: "Intrising/test-Lantech"
+
+  # 觸發複製的 issue 動作
+  triggers:
+    - opened       # Issue 被創建
+    - labeled      # Issue 被添加標籤時也觸發（避免 opened 時標籤還未添加的情況）
+
+  # Label 到目標 repository 的映射規則
+  label_to_repo:
+    "project: viewer-box": "Intrising/QA-Viewer"  # 優先級最高，有此 label 則忽略其他 project labels
+    "project: os3": "Intrising/QA-Switch-OS3OS4"
+    "project: os4": "Intrising/QA-Switch-OS3OS4"
+    "project: os5": "Intrising/QA-Switch-OS5"
+    "project: os2": "Intrising/QA-Switch-OS2"
+    "test": "Intrising/test-switch"
+
+  # 默認目標 repository（當 issue 沒有匹配的 project label 時使用）
+  default_target_repo: "Intrising/test-switch"
+
+  # 是否在新 issue 中標註來源
+  add_source_reference: true
+
+  # 是否保留原 issue 的所有 labels
+  copy_labels: true
+
+  # 是否下載並重新上傳圖片（設為 false 將保留原始圖片 URL）
+  reupload_images: false
+
+  # 是否在原 issue 添加評論（說明已複製到哪裡）
+  add_copy_comment: false

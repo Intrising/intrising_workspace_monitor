@@ -1,0 +1,71 @@
+version: '3.8'
+
+# 生產環境 Docker Compose 配置
+# 使用方式: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  github-monitor:
+    # 使用預構建的映像
+    image: your-registry.example.com/github-monitor:${VERSION:-latest}
+
+    # 生產環境重啟策略
+    restart: always
+
+    # 更嚴格的資源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '1.0'
+          memory: 512M
+
+      # 副本數（使用 Docker Swarm 時）
+      replicas: 2
+
+      # 更新策略
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+
+      # 回滾配置
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+        order: stop-first
+
+    # 生產環境健康檢查（更頻繁）
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+    # 生產環境日誌（整合到日誌系統）
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "tcp://your-logstash:5000"
+        tag: "github-monitor/{{.Name}}/{{.ID}}"
+        labels: "env=production,service=github-monitor"
+
+    # 額外的安全選項
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined
+
+    # 生產環境標籤
+    labels:
+      - "com.example.environment=production"
+      - "com.example.service=github-monitor"
+      - "com.example.version=${VERSION:-latest}"
+
+# 生產環境網絡（可能需要連接到現有網絡）
+networks:
+  github-monitor-network:
+    external: true
+    name: production-network
