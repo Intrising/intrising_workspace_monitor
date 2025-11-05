@@ -3,15 +3,15 @@ version: '3.8'
 services:
   github-monitor:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     image: github-monitor:latest
     container_name: github-monitor
     restart: unless-stopped
 
     # 環境變數從 .env 文件載入
     env_file:
-      - .env
+      - ../.env
 
     # 資源限制
     deploy:
@@ -42,9 +42,9 @@ services:
     # 掛載卷
     volumes:
       # 配置文件（只讀）
-      - ./config.yaml:/app/config.yaml:ro
+      - ../config.yaml:/app/config.yaml:ro
       # msmtp 配置文件
-      - ./.msmtprc:/home/appuser/.msmtprc:ro
+      - ../.msmtprc:/home/appuser/.msmtprc:ro
       # 日誌目錄
       - github-monitor-logs:/var/log/github-monitor
 
@@ -68,7 +68,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ./logs
+      device: ../logs
 
 # 網絡
 networks:

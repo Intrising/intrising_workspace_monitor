@@ -4,15 +4,15 @@ services:
   # PR Auto-Reviewer Webhook 服务
   pr-reviewer:
     build:
-      context: .
-      dockerfile: Dockerfile.reviewer
+      context: ..
+      dockerfile: docker/Dockerfile.reviewer
     image: github-pr-reviewer:latest
     container_name: pr-reviewer
     restart: unless-stopped
 
     # 环境变量从 .env 文件载入
     env_file:
-      - .env
+      - ../.env
 
     # 暴露端口
     ports:
@@ -47,7 +47,7 @@ services:
     # 挂载卷
     volumes:
       # 配置文件（只读）
-      - ./config.yaml:/app/config.yaml:ro
+      - ../config.yaml:/app/config.yaml:ro
       # 日志目录
       - pr-reviewer-logs:/var/log/github-monitor
 
@@ -72,7 +72,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ./logs
+      device: ../logs
 
 # 网络
 networks:

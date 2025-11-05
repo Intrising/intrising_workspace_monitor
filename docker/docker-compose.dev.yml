@@ -7,8 +7,8 @@ services:
   github-monitor:
     # 本地構建
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
       target: builder
 
     # 開發環境標籤
@@ -32,9 +32,9 @@ services:
 
     # 掛載源代碼（支持熱重載）
     volumes:
-      - ./pr_monitor.py:/app/pr_monitor.py:ro
-      - ./config.yaml:/app/config.yaml:ro
-      - ./logs:/var/log/github-monitor
+      - ../src/pr_monitor.py:/app/pr_monitor.py:ro
+      - ../config.yaml:/app/config.yaml:ro
+      - ../logs:/var/log/github-monitor
 
     # 關閉只讀限制（方便開發）
     read_only: false

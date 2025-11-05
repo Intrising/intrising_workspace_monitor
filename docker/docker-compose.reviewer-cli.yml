@@ -3,8 +3,8 @@ version: '3.8'
 services:
   pr-reviewer-cli:
     build:
-      context: .
-      dockerfile: Dockerfile.claude
+      context: ..
+      dockerfile: docker/Dockerfile.claude
     image: github-pr-reviewer-cli:latest
     container_name: pr-reviewer-cli
     restart: unless-stopped
@@ -13,19 +13,19 @@ services:
     command: python3 pr_reviewer.py
 
     env_file:
-      - .env
+      - ../.env
 
     ports:
       - "${WEBHOOK_PORT:-8080}:8080"
 
     volumes:
-      - ./pr_reviewer.py:/app/pr_reviewer.py:ro
-      - ./config.yaml:/app/config.yaml:ro
+      - ../src/pr_reviewer.py:/app/pr_reviewer.py:ro
+      - ../config.yaml:/app/config.yaml:ro
       - pr-reviewer-logs:/var/log/github-monitor
       # 掛載主機的 Claude 認證配置（需要可寫以記錄 debug 日誌）
       - ${HOME}/.claude:/home/appuser/.claude
       # 掛載 msmtp 配置文件
-      - ./.msmtprc:/home/appuser/.msmtprc:ro
+      - ../.msmtprc:/home/appuser/.msmtprc:ro
 
     networks:
       - pr-reviewer-network
