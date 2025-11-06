@@ -15,16 +15,27 @@ Issue Auto-Copier 是一個自動化工具，用於監聽特定 repository 的 i
    - 支援一個 issue 複製到多個 repositories
    - 可自訂 label 到 repository 的映射規則
 
-3. **圖片處理**
+3. **Issue 引用處理** ⭐ 新功能
+   - 自動轉換 issue 引用格式：`#1409` → `Intrising/test-Lantech#1409`
+   - 確保在目標 repository 中能正確連結回原始 issue
+   - 智能識別，不會誤轉換 URL 中的 anchor（如 `http://example.com#section`）
+   - 同時支援 issue body 和評論內容的轉換
+
+4. **圖片處理**
    - 自動下載原 issue 中的圖片
    - 重新上傳到目標 repository
    - 支援 Markdown 和 HTML 格式的圖片
 
-4. **完整複製**
+5. **完整複製**
    - 複製 issue 標題和內容
    - 保留所有 labels（可配置）
    - 添加來源引用（可配置）
    - 在原 issue 添加複製通知（可配置）
+
+6. **評論同步**
+   - 自動同步來源 issue 的新評論到所有已複製的目標 issues
+   - 保留原作者資訊和評論連結
+   - 同樣支援 issue 引用轉換
 
 ## 配置說明
 
@@ -112,6 +123,25 @@ issue_copy:
 1. 已存在的 issue（沒有匹配的 labels）
 2. 添加 label: `OS2`
 3. 系統自動複製到 `Intrising/QA-Switch-OS2`
+
+### 場景 4: Issue 引用自動轉換
+
+**原始 Issue 內容** (在 `Intrising/test-Lantech#1428`)：
+```markdown
+這個問題與 #1409 有關，也可能與 #1234 相關。
+參考 Intrising/QA-Viewer#100 的解決方案。
+```
+
+**複製到目標 repo 後的內容**：
+```markdown
+這個問題與 Intrising/test-Lantech#1409 有關，也可能與 Intrising/test-Lantech#1234 相關。
+參考 Intrising/QA-Viewer#100 的解決方案。
+```
+
+**轉換規則**：
+- ✅ `#1409` → `Intrising/test-Lantech#1409`（轉換簡短引用）
+- ✅ `Intrising/QA-Viewer#100` → `Intrising/QA-Viewer#100`（保留完整引用）
+- ✅ `http://example.com#section` → `http://example.com#section`（不轉換 URL anchor）
 
 ## 測試
 

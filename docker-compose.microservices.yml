@@ -1,0 +1,156 @@
+version: '3.8'
+
+services:
+  # ==================== Workspace Monitor Gateway ====================
+  workspace-monitor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: github-monitor:latest
+    container_name: workspace-monitor
+    restart: unless-stopped
+    command: python3 gateway.py
+
+    env_file:
+      - .private/.env
+
+    environment:
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=8080
+      - PR_REVIEWER_URL=http://pr-reviewer:8081
+      - ISSUE_COPIER_URL=http://issue-copier:8082
+
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+
+    volumes:
+      - ./src/gateway.py:/app/gateway.py:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - workspace-monitor-logs:/var/log/github-monitor
+      - pr-reviewer-db:/var/lib/github-monitor
+
+    networks:
+      - workspace-network
+
+    depends_on:
+      - pr-reviewer
+      - issue-copier
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==================== PR Reviewer Service ====================
+  pr-reviewer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pr-reviewer
+    image: pr-reviewer:latest
+    container_name: pr-reviewer
+    restart: unless-stopped
+    command: python3 pr_reviewer_service.py
+
+    env_file:
+      - .private/.env
+
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8081
+
+    expose:
+      - "8081"
+
+    volumes:
+      - ./src/pr_reviewer_service.py:/app/pr_reviewer_service.py:ro
+      - ./src/database.py:/app/database.py:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - pr-reviewer-logs:/var/log/github-monitor
+      - pr-reviewer-db:/var/lib/github-monitor
+      - ${HOME}/.codex:/home/prmonitor/.codex:rw
+      - ${HOME}/.claude:/home/prmonitor/.claude:rw
+      - /usr/bin/claude:/usr/bin/claude:ro
+      - ./.private/.msmtprc:/home/prmonitor/.msmtprc:ro
+
+    networks:
+      - workspace-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==================== Issue Copier Service ====================
+  issue-copier:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.issue-copier
+    image: issue-copier:latest
+    container_name: issue-copier
+    restart: unless-stopped
+    command: python3 issue_copier_service.py
+
+    env_file:
+      - .private/.env
+
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8082
+
+    expose:
+      - "8082"
+
+    volumes:
+      - ./src/issue_copier_service.py:/app/issue_copier_service.py:ro
+      - ./src/issue_copier.py:/app/issue_copier.py:ro
+      - ./src/database.py:/app/database.py:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - issue-copier-logs:/var/log/github-monitor
+      - pr-reviewer-db:/var/lib/github-monitor
+
+    networks:
+      - workspace-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  workspace-monitor-logs:
+    driver: local
+  pr-reviewer-logs:
+    driver: local
+  pr-reviewer-db:
+    external: true
+    name: github_pr_monitor_pr-reviewer-db
+  issue-copier-logs:
+    driver: local
+
+networks:
+  workspace-network:
+    driver: bridge

@@ -143,6 +143,35 @@ class TaskDatabase:
                     ON comment_sync_records(source_repo, source_issue_number)
                 """)
 
+                # 創建 webhook 事件記錄表
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS webhook_events (
+                        event_id TEXT PRIMARY KEY,
+                        event_type TEXT NOT NULL,
+                        repo_name TEXT,
+                        pr_number INTEGER,
+                        issue_number INTEGER,
+                        action TEXT,
+                        sender TEXT,
+                        payload TEXT,
+                        processed_by TEXT,
+                        status TEXT NOT NULL,
+                        error_message TEXT,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+
+                # Webhook 事件索引
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_webhook_created_at
+                    ON webhook_events(created_at DESC)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_webhook_type
+                    ON webhook_events(event_type, created_at DESC)
+                """)
+
                 conn.commit()
                 self.logger.info(f"資料庫初始化完成: {self.db_path}")
 
@@ -885,4 +914,172 @@ class TaskDatabase:
                 'total_synced': 0,
                 'success': 0,
                 'failed': 0
+            }
+
+    def record_webhook_event(self, event_data: Dict) -> bool:
+        """
+        記錄 webhook 事件
+
+        Args:
+            event_data: 事件數據字典，包含:
+                - event_id: 事件 ID
+                - event_type: 事件類型 (pull_request, issues, issue_comment)
+                - repo_name: 倉庫名稱
+                - pr_number: PR 編號 (可選)
+                - issue_number: Issue 編號 (可選)
+                - action: 動作 (opened, closed, created, etc.)
+                - sender: 發送者
+                - payload: 完整的 payload (JSON)
+                - processed_by: 處理服務 (pr-reviewer, issue-copier)
+                - status: 狀態 (processed, skipped, failed)
+                - error_message: 錯誤信息 (可選)
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            with self.lock:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+
+                    cursor.execute("""
+                        INSERT INTO webhook_events (
+                            event_id, event_type, repo_name, pr_number, issue_number,
+                            action, sender, payload, processed_by, status,
+                            error_message, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        event_data.get('event_id'),
+                        event_data.get('event_type'),
+                        event_data.get('repo_name'),
+                        event_data.get('pr_number'),
+                        event_data.get('issue_number'),
+                        event_data.get('action'),
+                        event_data.get('sender'),
+                        json.dumps(event_data.get('payload', {})),
+                        event_data.get('processed_by'),
+                        event_data.get('status', 'processed'),
+                        event_data.get('error_message'),
+                        event_data.get('created_at', datetime.now().isoformat())
+                    ))
+
+                    conn.commit()
+                    self.logger.debug(f"Webhook 事件已記錄: {event_data.get('event_id')}")
+                    return True
+
+        except Exception as e:
+            self.logger.error(f"記錄 webhook 事件失敗: {e}")
+            return False
+
+    def get_webhook_events(self, limit: int = 100, event_type: str = None, status: str = None) -> List[Dict]:
+        """
+        獲取 webhook 事件記錄
+
+        Args:
+            limit: 返回記錄數量限制
+            event_type: 過濾事件類型
+            status: 過濾狀態
+
+        Returns:
+            List[Dict]: 事件記錄列表
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 只顯示我們處理的事件類型
+                query = "SELECT * FROM webhook_events WHERE event_type IN ('pull_request', 'issues', 'issue_comment')"
+                params = []
+
+                if event_type:
+                    query += " AND event_type = ?"
+                    params.append(event_type)
+
+                if status:
+                    query += " AND status = ?"
+                    params.append(status)
+
+                query += " ORDER BY created_at DESC LIMIT ?"
+                params.append(limit)
+
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+
+                events = []
+                for row in rows:
+                    event = dict(row)
+                    # 解析 payload JSON
+                    if event.get('payload'):
+                        try:
+                            event['payload'] = json.loads(event['payload'])
+                        except:
+                            pass
+                    events.append(event)
+
+                return events
+
+        except Exception as e:
+            self.logger.error(f"獲取 webhook 事件失敗: {e}")
+            return []
+
+    def get_webhook_stats(self) -> Dict:
+        """
+        獲取 webhook 事件統計
+
+        Returns:
+            Dict: 統計信息
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 只統計我們處理的事件類型
+                event_filter = "WHERE event_type IN ('pull_request', 'issues', 'issue_comment')"
+
+                # 總事件數
+                cursor.execute(f"SELECT COUNT(*) FROM webhook_events {event_filter}")
+                total = cursor.fetchone()[0]
+
+                # 按類型統計
+                cursor.execute(f"""
+                    SELECT event_type, COUNT(*) as count
+                    FROM webhook_events
+                    {event_filter}
+                    GROUP BY event_type
+                """)
+                by_type = {row[0]: row[1] for row in cursor.fetchall()}
+
+                # 按狀態統計
+                cursor.execute(f"""
+                    SELECT status, COUNT(*) as count
+                    FROM webhook_events
+                    {event_filter}
+                    GROUP BY status
+                """)
+                by_status = {row[0]: row[1] for row in cursor.fetchall()}
+
+                # 按處理服務統計
+                cursor.execute(f"""
+                    SELECT processed_by, COUNT(*) as count
+                    FROM webhook_events
+                    {event_filter}
+                    AND processed_by IS NOT NULL
+                    GROUP BY processed_by
+                """)
+                by_service = {row[0]: row[1] for row in cursor.fetchall()}
+
+                return {
+                    'total': total,
+                    'by_type': by_type,
+                    'by_status': by_status,
+                    'by_service': by_service
+                }
+
+        except Exception as e:
+            self.logger.error(f"獲取 webhook 統計失敗: {e}")
+            return {
+                'total': 0,
+                'by_type': {},
+                'by_status': {},
+                'by_service': {}
             }

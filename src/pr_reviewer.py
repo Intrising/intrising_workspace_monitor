@@ -15,6 +15,8 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 from flask import Flask, request, jsonify
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
 from github import Github, GithubException
 from dotenv import load_dotenv
 import yaml
@@ -938,10 +940,40 @@ Content-Type: text/plain; charset=utf-8
 
 # Flask 应用
 app = Flask(__name__)
+auth = HTTPBasicAuth()
 reviewer = None
+
+# 用户认证数据（从环境变量读取）
+users = {}
+
+def init_auth():
+    """初始化认证用户"""
+    global users
+    # 从环境变量读取用户名和密码
+    web_username = os.getenv("WEB_USERNAME", "admin")
+    web_password = os.getenv("WEB_PASSWORD", "")
+
+    if web_password:
+        # 使用密码哈希存储
+        users[web_username] = generate_password_hash(web_password)
+        app.logger.info(f"Web 认证已启用，用户名: {web_username}")
+    else:
+        app.logger.warning("WEB_PASSWORD 未设置，Web UI 将不需要认证（不安全）")
+
+@auth.verify_password
+def verify_password(username, password):
+    """验证用户名和密码"""
+    if not users:
+        # 如果没有设置密码，允许所有访问
+        return True
+
+    if username in users and check_password_hash(users[username], password):
+        return username
+    return None
 
 
 @app.route('/', methods=['GET'])
+@auth.login_required
 def index():
     """主页 - 显示任务列表（HTML）"""
     html = """
@@ -1181,6 +1213,7 @@ def health_check():
     })
 
 @app.route('/api/tasks', methods=['GET'])
+@auth.login_required
 def get_tasks():
     """获取所有任务状态（API）"""
     # 從資料庫讀取任務
@@ -1196,6 +1229,7 @@ def get_tasks():
     })
 
 @app.route('/api/task/<path:task_id>', methods=['GET'])
+@auth.login_required
 def get_task(task_id):
     """获取单个任务状态（API）"""
     # 從資料庫讀取任務
@@ -1208,6 +1242,7 @@ def get_task(task_id):
 
 
 @app.route('/api/pr/<repo_owner>/<repo_name>/<int:pr_number>/participants', methods=['GET'])
+@auth.login_required
 def get_pr_participants_api(repo_owner: str, repo_name: str, pr_number: int):
     """获取 PR 参与者信息的 API endpoint
 
@@ -1233,6 +1268,7 @@ def get_pr_participants_api(repo_owner: str, repo_name: str, pr_number: int):
 
 
 @app.route('/api/user/<username>', methods=['GET'])
+@auth.login_required
 def get_user_info_api(username: str):
     """获取用户信息的 API endpoint
 
@@ -1255,6 +1291,7 @@ def get_user_info_api(username: str):
 
 
 @app.route('/api/issue-copies', methods=['GET'])
+@auth.login_required
 def get_issue_copies():
     """獲取 issue 複製記錄列表（API）
 
@@ -1288,6 +1325,7 @@ def get_issue_copies():
 
 
 @app.route('/api/issue-copies/stats', methods=['GET'])
+@auth.login_required
 def get_issue_copy_stats():
     """獲取 issue 複製統計（API）"""
     try:
@@ -1307,6 +1345,7 @@ def get_issue_copy_stats():
 
 
 @app.route('/api/comment-syncs', methods=['GET'])
+@auth.login_required
 def get_comment_syncs():
     """獲取評論同步記錄列表（API）
 
@@ -1340,6 +1379,7 @@ def get_comment_syncs():
 
 
 @app.route('/issue-copies', methods=['GET'])
+@auth.login_required
 def issue_copies_page():
     """Issue 複製記錄頁面（HTML）"""
     html = """
@@ -1828,6 +1868,9 @@ def main():
     try:
         # 初始化审查器
         reviewer = PRReviewer()
+
+        # 初始化认证
+        init_auth()
 
         # 获取配置
         host = os.getenv("WEBHOOK_HOST", "0.0.0.0")

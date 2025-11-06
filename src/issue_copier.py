@@ -139,6 +139,42 @@ class IssueCopier:
             self.logger.error(f"上傳圖片到 {repo_full_name} 失敗: {e}")
             return None
 
+    def process_issue_references(self, body: str, source_repo: str) -> str:
+        """處理 issue body 中的 issue 引用，將 #數字 轉換為完整的 repo#數字 格式
+
+        Args:
+            body: 原始 issue body 文本
+            source_repo: 來源 repository (如 "Intrising/test-Lantech")
+
+        Returns:
+            處理後的 body 文本（issue 引用已轉換為完整格式）
+
+        範例:
+            輸入: "這個問題與 #1409 有關"
+            輸出: "這個問題與 Intrising/test-Lantech#1409 有關"
+        """
+        if not body:
+            return body
+
+        import re
+
+        # 匹配 issue 引用模式:
+        # 1. 獨立的 #數字 (前面不是字母數字或斜線)
+        # 2. 不匹配已經是完整格式的引用 (owner/repo#number)
+
+        # 先保護已經是完整格式的引用 (如 Intrising/test-Lantech#1409)
+        # 使用負向後顧斷言確保 # 前面不是 /
+        pattern = r'(?<![/\w])#(\d+)(?!\w)'
+
+        def replace_reference(match):
+            issue_number = match.group(1)
+            return f"{source_repo}#{issue_number}"
+
+        # 替換所有符合條件的 issue 引用
+        processed_body = re.sub(pattern, replace_reference, body)
+
+        return processed_body
+
     def process_images_in_body(self, body: str, source_repo: str, target_repo: str) -> str:
         """處理 issue body 中的圖片（保留原始 URL）
 
@@ -324,6 +360,9 @@ class IssueCopier:
             processed_body, images_count = self._process_images_in_body_with_count(
                 source_body, source_repo, target_repo_name
             )
+
+            # 處理 issue 引用 (#數字 -> repo#數字)
+            processed_body = self.process_issue_references(processed_body, source_repo)
 
             # 添加來源引用
             if self.add_source_reference:
@@ -623,8 +662,11 @@ class IssueCopier:
             comment_author = comment.get("user", {}).get("login", "unknown")
             comment_url = comment.get("html_url", "")
 
+            # 處理評論中的 issue 引用 (#數字 -> repo#數字)
+            processed_comment_body = self.process_issue_references(comment_body, repo_full_name)
+
             # 構建評論內容（包含原作者資訊和原始評論連結）
-            synced_comment = f"**{comment_author}** 在原始 issue 留言：\n\n{comment_url}\n\n---\n\n{comment_body}"
+            synced_comment = f"**{comment_author}** 在原始 issue 留言：\n\n{comment_url}\n\n---\n\n{processed_comment_body}"
 
             # 檢測評論內容是否包含圖片或附件
             import re

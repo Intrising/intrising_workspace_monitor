@@ -1,0 +1,47 @@
+# PR Reviewer 微服務 Dockerfile
+FROM python:3.11-slim
+
+# 設置工作目錄
+WORKDIR /app
+
+# 安裝系統依賴
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    msmtp \
+    msmtp-mta \
+    mailutils \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# 複製 requirements
+COPY requirements.txt .
+
+# 安裝 Python 依賴
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 創建非 root 用戶
+RUN useradd -m -u 1000 -s /bin/bash prmonitor
+
+# 創建必要的目錄
+RUN mkdir -p /var/log/github-monitor /var/lib/github-monitor && \
+    chown -R prmonitor:prmonitor /var/log/github-monitor /var/lib/github-monitor
+
+# 切換到非 root 用戶
+USER prmonitor
+
+# 複製應用程式碼
+COPY --chown=prmonitor:prmonitor src/pr_reviewer_service.py /app/
+COPY --chown=prmonitor:prmonitor src/database.py /app/
+COPY --chown=prmonitor:prmonitor config.yaml /app/
+
+# 暴露端口
+EXPOSE 8081
+
+# 健康檢查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+# 啟動命令
+CMD ["python3", "pr_reviewer_service.py"]
