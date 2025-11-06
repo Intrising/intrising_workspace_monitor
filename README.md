@@ -152,6 +152,61 @@ intrising_workspace_monitor/
 
 ## 🏗️ 系統架構
 
+### 微服務架構 (推薦) ⭐
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                          GitHub Webhooks                             │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│              Workspace Monitor Gateway (port 8080)                  │
+│                    src/gateway.py                                   │
+├─────────────────────────────────────────────────────────────────────┤
+│  • Webhook 路由與驗證                                                │
+│  • 統一 Web Dashboard (HTTP Basic Auth)                            │
+│  • 服務健康監控                                                      │
+│  • Webhook 歷史記錄                                                  │
+└───────┬─────────────────┬─────────────────┬─────────────────────────┘
+        │                 │                 │
+        ▼                 ▼                 ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ PR Reviewer  │  │Issue Copier  │  │Comment Sync  │
+│  (port 8081) │  │ (port 8082)  │  │ (port 8082)  │
+├──────────────┤  ├──────────────┤  ├──────────────┤
+│ Claude CLI   │  │ Label-based  │  │ Comment      │
+│ Code Review  │  │ Issue Copy   │  │ Replication  │
+│              │  │              │  │              │
+│ • 獲取 diff  │  │ • 多目標複製  │  │ • 即時同步   │
+│ • AI 分析    │  │ • 圖片處理   │  │ • 來源追蹤   │
+│ • 發布評論   │  │ • 標籤同步   │  │              │
+└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+       │                 │                 │
+       └─────────────────┴─────────────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │  Shared Database     │
+              │  tasks.db (SQLite)   │
+              │                      │
+              │  • review_tasks      │
+              │  • issue_copy_records│
+              │  • comment_syncs     │
+              │  • webhook_events    │
+              └──────────────────────┘
+```
+
+**訪問資訊**：
+- **Dashboard**: http://localhost:8080
+- **認證**: admin / intrising2024
+- **詳細文檔**: [QUICKSTART_MICROSERVICES.md](QUICKSTART_MICROSERVICES.md)
+
+### 單體架構 (舊版)
+
+<details>
+<summary>點擊展開舊版架構</summary>
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │         pr-reviewer 容器 (port 8080)                 │
@@ -178,6 +233,8 @@ intrising_workspace_monitor/
 │  Logs: /var/log/github-monitor/                    │
 └─────────────────────────────────────────────────────┘
 ```
+
+</details>
 
 ## 📡 Webhook 監聽說明
 
