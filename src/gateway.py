@@ -31,6 +31,7 @@ from gateway_routes import (
     update_score_feedback,
     toggle_score_ignore,
     get_all_scores,
+    delete_score_record,
     index,
     pr_tasks_page,
     issue_copies_page,
@@ -377,6 +378,13 @@ def api_toggle_score_ignore(score_id):
 def api_all_scores():
     """統一評分統計 API - 包含 Issue 和 PR 評分"""
     return get_all_scores(gateway)
+
+
+@app.route('/api/all-scores/<path:score_id>', methods=['DELETE'])
+@auth.login_required
+def api_delete_score_record(score_id):
+    """刪除評分記錄"""
+    return delete_score_record(gateway, score_id)
 
 
 # Page Routes

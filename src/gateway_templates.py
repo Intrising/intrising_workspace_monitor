@@ -1567,7 +1567,9 @@ def issue_scores_template() -> str:
                                     <div style="display: flex; align-items: center; gap: 10px;">
                                         ${scoreDisplay ? `<span style="padding: 5px 15px; background: #667eea; color: white; border-radius: 15px; font-weight: bold;">${scoreDisplay}</span>` : ''}
                                         <span class="status ${score.status}">${statusText}</span>
+                                        ${score.ignored ? `<span style="padding: 5px 15px; background: #6c757d; color: white; border-radius: 15px; font-weight: bold;">已忽略</span>` : ''}
                                         ${hasDetails ? `<button onclick="toggleDetails('${detailsId}')" style="padding: 5px 10px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">詳細</button>` : ''}
+                                        <button onclick="deleteScore('${score.score_id}')" style="padding: 5px 10px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer;" title="刪除此記錄">🗑️</button>
                                     </div>
                                 </div>
                                 <div class="score-meta">
@@ -1603,6 +1605,9 @@ def issue_scores_template() -> str:
                                                 </button>
                                                 <button onclick="toggleIgnore('${score.score_id}', ${score.ignored || false})" id="ignore-btn-${detailsId}" style="padding: 8px 20px; background: ${score.ignored ? '#6c757d' : '#dc3545'}; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
                                                     ${score.ignored ? '✓ 已忽略' : '🚫 標記忽略'}
+                                                </button>
+                                                <button onclick="deleteScore('${score.score_id}')" style="padding: 8px 20px; background: #e74c3c; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
+                                                    🗑️ 刪除記錄
                                                 </button>
                                             </div>
                                             <span id="feedback-msg-${detailsId}" style="margin-top: 10px; display: inline-block; color: #28a745;"></span>
@@ -1682,6 +1687,30 @@ def issue_scores_template() -> str:
                 } catch (error) {
                     console.error('切換忽略狀態失敗:', error);
                     alert('操作失敗，請重試');
+                }
+            }
+
+            // 刪除評分記錄
+            async function deleteScore(scoreId) {
+                if (!confirm('確定要刪除此評分記錄嗎？此操作無法復原。')) {
+                    return;
+                }
+
+                try {
+                    const encodedScoreId = encodeURIComponent(scoreId);
+                    const response = await fetch(`/api/all-scores/${encodedScoreId}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (response.ok) {
+                        alert('已刪除評分記錄');
+                        loadScores();  // 重新載入資料
+                    } else {
+                        alert('刪除失敗，請重試');
+                    }
+                } catch (error) {
+                    console.error('刪除失敗:', error);
+                    alert('刪除失敗: ' + error.message);
                 }
             }
 
@@ -1816,6 +1845,20 @@ def all_scores_template() -> str:
             .type-issue { background: #3498db; color: white; }
             .type-pr { background: #9b59b6; color: white; }
             .type-comment { background: #1abc9c; color: white; }
+            .delete-btn {
+                background: #e74c3c;
+                color: white;
+                border: none;
+                padding: 8px 12px;
+                border-radius: 5px;
+                cursor: pointer;
+                font-size: 1.2em;
+                transition: background 0.3s;
+                margin-left: 10px;
+            }
+            .delete-btn:hover {
+                background: #c0392b;
+            }
             .loading {
                 text-align: center;
                 padding: 40px;
@@ -2239,6 +2282,29 @@ def all_scores_template() -> str:
                 }).join('');
 
                 document.getElementById('scores').innerHTML = scoresHtml;
+            }
+
+            // 刪除評分記錄
+            async function deleteScore(scoreId, type) {
+                if (!confirm('確定要刪除此評分記錄嗎？')) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/all-scores/${encodeURIComponent(scoreId)}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (response.ok) {
+                        alert('已刪除評分記錄');
+                        loadScores();  // 重新載入資料
+                    } else {
+                        alert('刪除失敗');
+                    }
+                } catch (error) {
+                    console.error('刪除失敗:', error);
+                    alert('刪除失敗: ' + error.message);
+                }
             }
 
             // 按作者過濾

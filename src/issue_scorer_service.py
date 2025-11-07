@@ -507,6 +507,8 @@ class IssueScorerService:
             content_type_display = "Issue" if content_type == "issue" else "評論"
 
             comment_body = f"""<!-- AUTO_SCORE_BOT_COMMENT -->
+<!--skip for ai audit-->
+
 @{author}
 
 ## 📊 {content_type_display}品質評分
@@ -577,12 +579,12 @@ class IssueScorerService:
             title = issue_data.get('title', '')
             body = issue_data.get('body', '')
 
-            # 使用 sender (執行動作的人) 而不是 issue.user (原始作者)
-            # 這樣轉貼的 Issue 會以轉貼者作為人員統計依據
-            author = event_data.get('sender', {}).get('login', '')
+            # 使用 issue.user (原始作者) 作為 Issue 的作者
+            # Issue 應該永遠以原始建立者為作者，不管是誰編輯或觸發 webhook
+            author = issue_data.get('user', {}).get('login', '')
             if not author:
-                # 如果沒有 sender,才使用原始作者作為備援
-                author = issue_data.get('user', {}).get('login', '')
+                # 如果無法獲取原始作者，才使用 sender 作為備援
+                author = event_data.get('sender', {}).get('login', '')
 
             issue_url = issue_data.get('html_url', '')
             comment_id = None
@@ -612,6 +614,14 @@ class IssueScorerService:
                     'message': 'Issue 包含 skip for ai audit 標記'
                 }
 
+            # 🔒 檢查 Issue body 是否包含機器人評分標記
+            if body and '<!-- AUTO_SCORE_BOT_COMMENT -->' in body:
+                self.logger.info(f"跳過評分：Issue 包含 AUTO_SCORE_BOT_COMMENT 標記 (repo={repo_name}, issue={issue_number})")
+                return {
+                    'status': 'skipped',
+                    'message': 'Issue 包含機器人評分標記'
+                }
+
         else:  # issue_comment
             content_type = "comment"
             comment_data = event_data.get('comment', {})
@@ -619,12 +629,12 @@ class IssueScorerService:
             title = issue_data.get('title', '')  # 保留 issue 標題作為參考
             body = comment_data.get('body', '')
 
-            # 使用 sender (執行動作的人) 而不是 comment.user (原始作者)
-            # 這樣轉貼評論時會以轉貼者作為人員統計依據
-            author = event_data.get('sender', {}).get('login', '')
+            # 獲取評論的原始作者（評論應該以原始作者為主）
+            author = comment_data.get('user', {}).get('login', '')
+
+            # 如果無法獲取原始作者，才使用 sender 作為備援
             if not author:
-                # 如果沒有 sender,才使用原始作者作為備援
-                author = comment_data.get('user', {}).get('login', '')
+                author = event_data.get('sender', {}).get('login', '')
 
             issue_url = comment_data.get('html_url', '')
             comment_id = comment_data.get('id')
@@ -637,41 +647,13 @@ class IssueScorerService:
                     'message': '評論包含 skip for ai audit 標記'
                 }
 
-            # 🔒 防止無限循環：跳過機器人自己的評論
-            # 檢查評論是否包含自動評分標記
+            # 🔒 檢查評論是否包含自動評分標記（跳過機器人自己的評論）
             if body and '<!-- AUTO_SCORE_BOT_COMMENT -->' in body:
-                self.logger.info(f"跳過評分：這是機器人自己的評論 (repo={repo_name}, issue={issue_number}, comment={comment_id})")
+                self.logger.info(f"跳過評分：評論包含 AUTO_SCORE_BOT_COMMENT 標記 (repo={repo_name}, issue={issue_number}, comment={comment_id})")
                 return {
                     'status': 'skipped',
-                    'message': '跳過機器人自己的評論，避免無限循環'
+                    'message': '評論包含機器人評分標記'
                 }
-
-            # 也檢查作者是否為機器人（雙重保護）
-            # 但如果評論包含結構化的修復報告內容，則仍然進行評分
-            try:
-                bot_user = self.github.get_user().login
-                if author == bot_user:
-                    # 檢查是否包含結構化的修復報告標記
-                    structured_markers = [
-                        '### Fixed in Version',
-                        '### Root Cause',
-                        '### Solution',
-                        '### Post-Fix Side Effects Analysis'
-                    ]
-                    has_structured_content = all(marker in body for marker in structured_markers)
-
-                    if has_structured_content:
-                        self.logger.info(f"評論作者是機器人 ({author})，但包含結構化修復報告，仍進行評分")
-                    else:
-                        # 記錄缺少哪些標記以便除錯
-                        missing_markers = [marker for marker in structured_markers if marker not in body]
-                        self.logger.info(f"跳過評分：評論作者是機器人本身 ({author})，缺少標記: {missing_markers}")
-                        return {
-                            'status': 'skipped',
-                            'message': '跳過機器人自己的評論'
-                        }
-            except Exception as e:
-                self.logger.warning(f"無法獲取機器人用戶名: {e}")
 
             # ✅ 所有評論都進行評分（移除過濾邏輯）
             self.logger.info(f"準備評分評論: repo={repo_name}, issue={issue_number}, comment={comment_id}")
@@ -911,6 +893,29 @@ def toggle_ignore(score_id):
 
     except Exception as e:
         service.logger.error(f"更新忽略狀態失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scores/<path:score_id>', methods=['DELETE'])
+def delete_score(score_id):
+    """刪除評分記錄"""
+    try:
+        # 刪除資料庫中的記錄
+        success = service.db.delete_score_record(score_id)
+
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': '已刪除評分記錄'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '找不到評分記錄'
+            }), 404
+
+    except Exception as e:
+        service.logger.error(f"刪除評分記錄失敗: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

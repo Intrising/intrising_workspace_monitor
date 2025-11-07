@@ -364,6 +364,11 @@ class IssueCopier:
             # 處理 issue 引用 (#數字 -> repo#數字)
             processed_body = self.process_issue_references(processed_body, source_repo)
 
+            # 🔒 只有從 test-Lantech 複製過來的才加上跳過評分標記
+            skip_audit_marker = ""
+            if source_repo == "Intrising/test-Lantech":
+                skip_audit_marker = "<!--skip for ai audit-->\n\n"
+
             # 添加來源引用
             if self.add_source_reference:
                 source_reference = f"""---
@@ -372,9 +377,9 @@ class IssueCopier:
 ---
 
 """
-                new_body = source_reference + processed_body
+                new_body = skip_audit_marker + source_reference + processed_body
             else:
-                new_body = processed_body
+                new_body = skip_audit_marker + processed_body
 
             # 修改標題，加上 [LT#原issue編號] 前綴
             new_title = f"[LT#{source_number}] {source_title}"
@@ -674,7 +679,11 @@ class IssueCopier:
             processed_comment_body = self.process_issue_references(comment_body, repo_full_name)
 
             # 構建評論內容（包含原作者資訊和原始評論連結）
-            synced_comment = f"**{comment_author}** 在原始 issue 留言：\n\n{comment_url}\n\n---\n\n{processed_comment_body}"
+            # 🔒 只有從 test-Lantech 同步過來的評論才加上跳過評分標記
+            skip_audit_marker = ""
+            if repo_full_name == "Intrising/test-Lantech":
+                skip_audit_marker = "<!--skip for ai audit-->\n\n"
+            synced_comment = skip_audit_marker + f"**{comment_author}** 在原始 issue 留言：\n\n{comment_url}\n\n---\n\n{processed_comment_body}"
 
             # 檢測評論內容是否包含圖片或附件
             import re

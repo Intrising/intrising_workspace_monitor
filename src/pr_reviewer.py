@@ -893,7 +893,9 @@ Content-Type: text/plain; charset=utf-8
             # 构建评论(不包含 diff 详情)
             # 注意：此時 comment 尚未創建，所以無法在此處獲取 comment_url
             # 我們需要在創建 comment 後再編輯它，或者在評論末尾添加「待補充」提示
-            comment_body = f"""@{pr_author}
+            comment_body = f"""<!--skip for ai audit-->
+
+@{pr_author}
 
 ## 🤖 自動程式碼審查
 
@@ -922,7 +924,9 @@ Content-Type: text/plain; charset=utf-8
             self.logger.info(f"已发布审查评论到 PR #{pr_number} (作者: @{pr_author}), URL: {comment_url}")
 
             # 更新評論，添加 comment link
-            updated_comment_body = f"""@{pr_author}
+            updated_comment_body = f"""<!--skip for ai audit-->
+
+@{pr_author}
 
 ## 🤖 自動程式碼審查
 

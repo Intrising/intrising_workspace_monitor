@@ -150,6 +150,7 @@ def get_all_scores(gateway) -> tuple:
                     if created_at >= cutoff_date:
                         all_scores.append({
                             'type': 'issue',
+                            'score_id': record.get('score_id'),  # 加入 score_id 用於刪除
                             'score': record.get('overall_score'),
                             'author': record.get('author'),
                             'repo': record.get('repo_name'),
@@ -199,6 +200,24 @@ def get_all_scores(gateway) -> tuple:
 
     except Exception as e:
         gateway.logger.error(f"獲取統一評分數據失敗: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def delete_score_record(gateway, score_id: str) -> tuple:
+    """刪除評分記錄"""
+    try:
+        # URL encode the score_id for forwarding to issue-scorer
+        encoded_score_id = quote(score_id, safe='')
+        response = requests.delete(
+            f"{gateway.issue_scorer_url}/api/scores/{encoded_score_id}",
+            timeout=10
+        )
+        if response.status_code == 200:
+            return jsonify(response.json()), 200
+        else:
+            return jsonify({"error": "Failed to delete score record"}), response.status_code
+    except Exception as e:
+        gateway.logger.error(f"刪除評分記錄失敗: {e}")
         return jsonify({"error": str(e)}), 500
 
 

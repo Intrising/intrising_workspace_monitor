@@ -1294,6 +1294,35 @@ class TaskDatabase:
             self.logger.error(f"更新評分記錄標題失敗: {e}")
             return False
 
+    def delete_score_record(self, score_id: str) -> bool:
+        """
+        刪除評分記錄
+
+        Args:
+            score_id: 評分記錄 ID
+
+        Returns:
+            bool: 是否刪除成功
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                query = "DELETE FROM issue_scores WHERE score_id = ?"
+                cursor.execute(query, (score_id,))
+                conn.commit()
+
+                if cursor.rowcount > 0:
+                    self.logger.info(f"已刪除評分記錄: {score_id}")
+                    return True
+                else:
+                    self.logger.warning(f"找不到評分記錄: {score_id}")
+                    return False
+
+        except Exception as e:
+            self.logger.error(f"刪除評分記錄失敗: {e}")
+            return False
+
     def get_score_record(self, score_id: str) -> Optional[Dict]:
         """
         獲取單個評分記錄
