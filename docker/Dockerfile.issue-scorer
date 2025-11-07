@@ -1,4 +1,4 @@
-# PR Reviewer 微服務 Dockerfile
+# Issue Scorer 微服務 Dockerfile
 FROM python:3.11-slim
 
 # 設置工作目錄
@@ -8,9 +8,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     git \
-    msmtp \
-    msmtp-mta \
-    mailutils \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*
@@ -22,27 +19,26 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 創建非 root 用戶
-RUN useradd -m -u 1000 -s /bin/bash prmonitor
+RUN useradd -m -u 1000 -s /bin/bash scorer
 
 # 創建必要的目錄
 RUN mkdir -p /var/log/github-monitor /var/lib/github-monitor && \
-    chown -R prmonitor:prmonitor /var/log/github-monitor /var/lib/github-monitor
+    chown -R scorer:scorer /var/log/github-monitor /var/lib/github-monitor
 
 # 切換到非 root 用戶
-USER prmonitor
+USER scorer
 
 # 複製應用程式碼
-COPY --chown=prmonitor:prmonitor src/pr_reviewer_service.py /app/
-COPY --chown=prmonitor:prmonitor src/pr_reviewer.py /app/
-COPY --chown=prmonitor:prmonitor src/database.py /app/
-COPY --chown=prmonitor:prmonitor config.yaml /app/
+COPY --chown=scorer:scorer src/issue_scorer_service.py /app/
+COPY --chown=scorer:scorer src/database.py /app/
+COPY --chown=scorer:scorer config.yaml /app/
 
 # 暴露端口
-EXPOSE 8081
+EXPOSE 8083
 
 # 健康檢查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8081/health || exit 1
+    CMD curl -f http://localhost:8083/health || exit 1
 
 # 啟動命令
-CMD ["python3", "pr_reviewer.py"]
+CMD ["python3", "issue_scorer_service.py"]

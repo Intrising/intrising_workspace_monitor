@@ -131,15 +131,57 @@ class PRReviewerService:
 **代碼改動內容**:
 {files_diff}
 
-請提供專業的代碼審查報告，包括：
+## 輸出格式要求
 
-1. **代碼質量評估**: 評估代碼的可讀性、可維護性、設計模式使用
-2. **潛在問題或 Bug**: 指出可能的邏輯錯誤、邊界條件問題、異常處理缺失
-3. **改進建議**: 提供具體的優化建議和最佳實踐
-4. **安全性考量**: 檢查是否存在安全漏洞、敏感資料洩漏、注入攻擊風險
-5. **性能影響**: 評估改動對系統性能的影響
+請直接提供審查報告內容，使用以下格式（使用繁體中文）：
 
-請用繁體中文回答，保持專業且簡潔。如果代碼質量良好，請給予肯定；如果有問題，請明確指出並提供改進方案。"""
+### 總體評分
+
+**⚠️ 重要：所有評分必須使用 0-100 分制，不要使用 X/10 或 X/5 格式！**
+
+請提供以下評分項目（每項 0-100 分）：
+
+| 評分項目 | 分數 (0-100) | 說明 |
+|---------|-------------|------|
+| 代碼質量 | XX/100 | [簡要說明] |
+| 安全性 | XX/100 | [簡要說明] |
+| 可維護性 | XX/100 | [簡要說明] |
+
+**總分：XX/100** (上述三項的平均分，四捨五入取整數)
+
+評分標準參考：
+- 90-100：優秀，程式碼品質高，無重大問題
+- 80-89：良好，有少量改進空間
+- 70-79：尚可，有一些問題需要修改
+- 60-69：需要改進，存在較多問題
+- 0-59：不建議合併，需要重大修改
+
+### 總體評價
+[簡要總結這個 PR 的整體質量和主要變更]
+
+### 發現的問題
+[列出發現的問題，按嚴重程度排序]
+- **嚴重**: [嚴重問題，如果有的話]
+- **中等**: [中等問題，如果有的話]
+- **輕微**: [輕微問題，如果有的話]
+
+### 改進建議
+[提供具體的優化建議和最佳實踐]
+
+### 優點
+[指出程式碼的優點]
+
+### 審查結論
+[給出總體建議：建議批准 / 建議修改後批准 / 需要重大修改]
+
+---
+
+**重要指示**：
+1. 請直接輸出審查報告內容，不要包含任何分析過程或思考步驟
+2. 不要在回覆中再次包含程式碼變更的 diff 內容
+3. 只輸出最終的審查報告
+4. **所有評分（包含分項評分和總分）必須使用 0-100 分制，格式為 "XX/100"**
+5. **總分必須是各分項評分的平均值（四捨五入取整數）**"""
 
             # 將 prompt 寫入臨時文件（避免命令行參數過長）
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -188,8 +230,8 @@ class PRReviewerService:
                 'error': str(e)
             }
 
-    def _post_review_to_github(self, repo_name: str, pr_number: int, review_content: str):
-        """將審查結果發布到 GitHub PR"""
+    def _post_review_to_github(self, repo_name: str, pr_number: int, review_content: str) -> str:
+        """將審查結果發布到 GitHub PR,返回 comment URL"""
         try:
             self.logger.info(f"發布審查結果到 {repo_name}#{pr_number}")
 
@@ -207,12 +249,47 @@ class PRReviewerService:
 """
 
             # 發布評論
-            pr.create_issue_comment(comment_body)
-            self.logger.info(f"審查結果已發布到 {repo_name}#{pr_number}")
+            comment = pr.create_issue_comment(comment_body)
+            comment_url = comment.html_url
+            self.logger.info(f"審查結果已發布到 {repo_name}#{pr_number}, URL: {comment_url}")
+
+            return comment_url
 
         except Exception as e:
             self.logger.error(f"發布審查結果失敗: {e}", exc_info=True)
             raise
+
+    def _extract_score_from_review(self, review_content: str) -> Optional[int]:
+        """從審查內容中提取評分（0-100）"""
+        try:
+            import re
+
+            # 優先匹配「總分」格式
+            patterns = [
+                r'總分[：:]\s*\*?\*?(\d+)\s*/\s*100',           # 總分：85/100
+                r'總分[：:]\s*\*?\*?(\d+)',                     # 總分：85
+                r'評分[：:]\s*\*?\*?(\d+)\s*/\s*100',           # 評分：85/100
+                r'Score[：:]\s*(\d+)\s*/\s*100',                # Score: 85/100
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, review_content, re.IGNORECASE)
+                if match:
+                    score = int(match.group(1))
+
+                    # 確保分數在 0-100 範圍內
+                    if 0 <= score <= 100:
+                        self.logger.info(f"從審查內容中提取到總分: {score}/100")
+                        return score
+                    else:
+                        self.logger.warning(f"提取到的評分超出範圍: {score}")
+
+            self.logger.warning("無法從審查內容中提取評分")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"解析評分失敗: {e}")
+            return None
 
     def should_review_pr(self, pr_data: Dict) -> bool:
         """判斷是否應該審查此 PR"""
@@ -277,14 +354,26 @@ class PRReviewerService:
             review_result = self._perform_codex_review(repo_name, pr_number, pr_data)
 
             if review_result['success']:
-                # 將審查結果發布到 GitHub
-                self._post_review_to_github(repo_name, pr_number, review_result['content'])
+                review_content = review_result['content']
 
-                self.db.update_task(task_id, {
+                # 提取評分
+                score = self._extract_score_from_review(review_content)
+
+                # 將審查結果發布到 GitHub
+                comment_url = self._post_review_to_github(repo_name, pr_number, review_content)
+
+                # 更新任務,包含評分和評論連結
+                update_data = {
                     'status': 'completed',
-                    'message': '審查完成',
-                    'review_content': review_result['content']
-                })
+                    'message': f"審查完成{f' (評分: {score}/100)' if score else ''}",
+                    'review_content': review_content
+                }
+                if score is not None:
+                    update_data['score'] = score
+                if comment_url:
+                    update_data['review_comment_url'] = comment_url
+
+                self.db.update_task(task_id, update_data)
             else:
                 self.db.update_task(task_id, {
                     'status': 'failed',

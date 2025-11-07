@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 GitHub PR Auto-Reviewer - Webhook 驱动的 PR 审查系统
-接收 GitHub webhook 并使用 Codex CLI 自动审查 Pull Requests
+接收 GitHub webhook 並使用 Claude CLI 自動審查 Pull Requests
 """
 
 import os
@@ -45,8 +45,8 @@ class PRReviewer:
         github_api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
         self.github = Github(github_token, base_url=github_api_url)
 
-        # Codex CLI 路径
-        self.codex_cli_path = os.getenv("CODEX_CLI_PATH", "codex")
+        # Claude CLI 路徑（用於 PR 審查）
+        self.claude_cli_path = os.getenv("CLAUDE_CLI_PATH", "claude")
 
         # Webhook 密钥
         self.webhook_secret = os.getenv("WEBHOOK_SECRET")
@@ -293,8 +293,8 @@ class PRReviewer:
             self.logger.error(f"获取 PR 上下文失败: {e}")
             return {}
 
-    def review_pr_with_codex(self, repo_full_name: str, pr_number: int) -> Optional[str]:
-        """使用 Codex CLI 审查 PR"""
+    def review_pr_with_claude(self, repo_full_name: str, pr_number: int) -> Optional[str]:
+        """使用 Claude CLI 審查 PR"""
         try:
             # 获取 PR 上下文和 diff
             context = self.get_pr_context(repo_full_name, pr_number)
@@ -308,18 +308,17 @@ class PRReviewer:
             review_config = self.config.get("review", {})
             prompt = self._build_review_prompt(context, diff, review_config)
 
-            # 调用 Codex CLI
-            self.logger.info(f"正在使用 Codex CLI 审查 PR #{pr_number}...")
+            # 調用 Claude CLI
+            self.logger.info(f"正在使用 Claude CLI 審查 PR #{pr_number}...")
 
-            # 调用 Codex CLI（使用 exec 子命令进行非交互式输出）
+            # 調用 Claude CLI（使用 --print 進行非交互式輸出）
             cmd = [
-                self.codex_cli_path,
-                'exec',
-                '--skip-git-repo-check',  # 跳过 git repo 检查（容器环境需要）
+                self.claude_cli_path,
+                '--print',
                 prompt
             ]
 
-            self.logger.debug(f"执行 Codex CLI...")
+            self.logger.debug(f"執行 Claude CLI...")
 
             result = subprocess.run(
                 cmd,
@@ -330,25 +329,74 @@ class PRReviewer:
             )
 
             if result.returncode != 0:
-                self.logger.error(f"Codex CLI 执行失败 (返回码: {result.returncode})")
-                self.logger.error(f"stderr: {result.stderr[:500]}")  # 只显示前500字符
+                self.logger.error(f"Claude CLI 執行失敗 (返回碼: {result.returncode})")
+                self.logger.error(f"stderr: {result.stderr[:500]}")  # 只顯示前500字符
                 return None
 
             review_content = result.stdout.strip()
 
             if not review_content:
-                self.logger.warning("Codex CLI 返回空内容")
+                self.logger.warning("Claude CLI 返回空內容")
                 return None
 
-            self.logger.info(f"Codex 审查完成: {len(review_content)} 字符")
+            self.logger.info(f"Claude 審查完成: {len(review_content)} 字符")
             return review_content
 
         except subprocess.TimeoutExpired:
-            self.logger.error("Codex CLI 执行超时")
+            self.logger.error("Claude CLI 執行超時")
             return None
         except Exception as e:
-            self.logger.error(f"Codex 审查失败: {e}")
+            self.logger.error(f"Claude 審查失敗: {e}")
             return None
+
+    def _extract_score_from_review(self, review_content: str) -> Optional[int]:
+        """從審查內容中提取評分（0-100）
+
+        優先提取 "總分：XX/100" 格式的評分
+        """
+        try:
+            import re
+
+            # 優先匹配「總分」格式
+            patterns = [
+                r'總分[：:]\s*\*?\*?(\d+)\s*/\s*100',           # 總分：85/100
+                r'總分[：:]\s*\*?\*?(\d+)',                     # 總分：85
+                r'評分[：:]\s*\*?\*?(\d+)\s*/\s*100',           # 評分：85/100
+                r'Score[：:]\s*(\d+)\s*/\s*100',                # Score: 85/100
+                r'評分[：:]\s*\*?\*?(\d+)\s*分',                # 評分：85分
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, review_content, re.IGNORECASE)
+                if match:
+                    score = int(match.group(1))
+
+                    # 確保分數在 0-100 範圍內
+                    if 0 <= score <= 100:
+                        self.logger.info(f"從審查內容中提取到總分: {score}/100")
+                        return score
+                    else:
+                        self.logger.warning(f"提取到的評分超出範圍: {score}")
+
+            self.logger.warning("無法從審查內容中提取評分")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"解析評分失敗: {e}")
+            return None
+
+    def _get_score_description(self, score: int) -> str:
+        """根據評分返回評分說明"""
+        if score >= 90:
+            return "⭐⭐⭐⭐⭐ 優秀 - 程式碼品質高，無重大問題"
+        elif score >= 80:
+            return "⭐⭐⭐⭐ 良好 - 有少量改進空間"
+        elif score >= 70:
+            return "⭐⭐⭐ 尚可 - 有一些問題需要修改"
+        elif score >= 60:
+            return "⭐⭐ 需要改進 - 存在較多問題"
+        else:
+            return "⭐ 不建議合併 - 需要重大修改"
 
     def _build_review_prompt(self, context: Dict, diff: str, config: Dict) -> str:
         """构建审查提示词"""
@@ -428,6 +476,27 @@ class PRReviewer:
 
 請直接提供審查報告內容，使用以下格式（使用 {language}）：
 
+### 總體評分
+
+**⚠️ 重要：所有評分必須使用 0-100 分制，不要使用 X/10 或 X/5 格式！**
+
+請提供以下評分項目（每項 0-100 分）：
+
+| 評分項目 | 分數 (0-100) | 說明 |
+|---------|-------------|------|
+| 代碼質量 | XX/100 | [簡要說明] |
+| 安全性 | XX/100 | [簡要說明] |
+| 可維護性 | XX/100 | [簡要說明] |
+
+**總分：XX/100** (上述三項的平均分，四捨五入取整數)
+
+評分標準參考：
+- 90-100：優秀，程式碼品質高，無重大問題
+- 80-89：良好，有少量改進空間
+- 70-79：尚可，有一些問題需要修改
+- 60-69：需要改進，存在較多問題
+- 0-59：不建議合併，需要重大修改
+
 ### 總體評價
 [簡要總結這個 PR 的整體質量和主要變更]
 
@@ -453,6 +522,8 @@ class PRReviewer:
 2. 不要在回覆中再次包含程式碼變更的 diff 內容
 3. 不要輸出任何命令執行過程或文件搜尋過程
 4. 只輸出最終的審查報告
+5. **所有評分（包含分項評分和總分）必須使用 0-100 分制，格式為 "XX/100"**
+6. **總分必須是各分項評分的平均值（四捨五入取整數）**
 """
         return prompt
 
@@ -662,7 +733,7 @@ Content-Type: text/plain; charset=utf-8
                         "elements": [
                             {
                                 "type": "mrkdwn",
-                                "text": f"由 Codex AI 自動產生 @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                                "text": f"由 Claude AI 自動產生 @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                             }
                         ]
                     }
@@ -687,7 +758,7 @@ Content-Type: text/plain; charset=utf-8
             self.logger.error(f"Slack 通知失敗: {e}")
 
     def _clean_review_content(self, content: str) -> str:
-        """清理审查内容，移除 Codex CLI 的调试信息和程式碼變更區塊"""
+        """清理審查內容，移除 Claude CLI 的調試信息和程式碼變更區塊"""
         import re
 
         # 第一步：移除「程式碼變更」區塊
@@ -705,7 +776,7 @@ Content-Type: text/plain; charset=utf-8
 
         skip_patterns = [
             r'^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\]',  # 时间戳开头
-            r'^(thinking|exec|bash|codex|tokens used:)',  # Codex 内部命令
+            r'^(thinking|exec|bash|claude|tokens used:)',  # Claude 內部命令
             r'Analyzing code changes',
             r'Checking file location',
             r'Listing top-level directories',
@@ -767,10 +838,35 @@ Content-Type: text/plain; charset=utf-8
             # 清理审查内容，移除调试信息
             cleaned_content = self._clean_review_content(review_content)
 
-            # 构建评论(不包含 diff 详情)
-            comment_body = f"""## 🤖 自動程式碼審查
+            # 提取評分（0-100）
+            score = self._extract_score_from_review(review_content)
 
-{cleaned_content}
+            # 獲取 PR 作者和 URL
+            pr_author = pr.user.login
+            pr_url = pr.html_url
+
+            # 構建評分表格（加上總分）
+            score_section = ""
+            if score is not None:
+                score_section = f"""
+## 📊 總體評分
+
+| 總分 | 評分說明 |
+|------|----------|
+| **{score}/100** | {self._get_score_description(score)} |
+
+"""
+
+            # 构建评论(不包含 diff 详情)
+            # 注意：此時 comment 尚未創建，所以無法在此處獲取 comment_url
+            # 我們需要在創建 comment 後再編輯它，或者在評論末尾添加「待補充」提示
+            comment_body = f"""@{pr_author}
+
+## 🤖 自動程式碼審查
+
+**審查來源**: {pr_url}
+
+{score_section}{cleaned_content}
 
 ---
 
@@ -784,11 +880,43 @@ Content-Type: text/plain; charset=utf-8
 </details>
 
 ---
-*由 Codex AI 自動產生 @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+*由 Claude AI 自動產生 @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
 """
 
-            pr.create_issue_comment(comment_body)
-            self.logger.info(f"已发布审查评论到 PR #{pr_number}")
+            # 創建評論
+            comment = pr.create_issue_comment(comment_body)
+            comment_url = comment.html_url
+            self.logger.info(f"已发布审查评论到 PR #{pr_number} (作者: @{pr_author}), URL: {comment_url}")
+
+            # 更新評論，添加 comment link
+            updated_comment_body = f"""@{pr_author}
+
+## 🤖 自動程式碼審查
+
+**審查來源**: {pr_url}
+**評論連結**: {comment_url}
+
+{score_section}{cleaned_content}
+
+---
+
+<details>
+<summary>📋 <b>程式碼變更摘要</b> (點擊展開)</summary>
+
+此 PR 包含 {pr.changed_files} 個檔案變更 (+{pr.additions} -{pr.deletions} 行)
+
+完整程式碼變更請至 GitHub PR 頁面查看。
+
+</details>
+
+---
+*由 Claude AI 自動產生 @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
+"""
+            comment.edit(updated_comment_body)
+            self.logger.info(f"已更新評論，添加 comment link: {comment_url}")
+
+            # 返回 comment URL
+            return comment_url
 
             # 可选：添加审查标签
             auto_label = self.config.get("review", {}).get("auto_label", True)
@@ -851,16 +979,34 @@ Content-Type: text/plain; charset=utf-8
             self._update_task_status(pr_id, "processing", 30, "收集參與者 Email")
 
             # 执行审查
-            self._update_task_status(pr_id, "processing", 40, "使用 Codex AI 審查程式碼（這可能需要 3-5 分鐘）")
-            review_content = self.review_pr_with_codex(repo_full_name, pr_number)
+            self._update_task_status(pr_id, "processing", 40, "使用 Claude AI 審查程式碼（這可能需要 3-5 分鐘）")
+            review_content = self.review_pr_with_claude(repo_full_name, pr_number)
 
             if review_content:
+                # 提取評分
+                score = self._extract_score_from_review(review_content)
+
                 # 发布审查评论
                 self._update_task_status(pr_id, "processing", 80, "發布審查評論到 GitHub")
-                self.post_review_comment(repo_full_name, pr_number, review_content)
+                comment_url = self.post_review_comment(repo_full_name, pr_number, review_content)
 
-                self._update_task_status(pr_id, "completed", 100, "審查完成")
-                self.logger.info(f"[后台线程] PR #{pr_number} 处理完成")
+                # 更新任務狀態並保存評分和評論連結
+                update_data = {
+                    'status': 'completed',
+                    'progress': 100,
+                    'message': f"審查完成{f' (評分: {score}/100)' if score else ''}",
+                    'completed_at': datetime.now().isoformat(),
+                    'review_content': review_content
+                }
+                if score is not None:
+                    update_data['score'] = score
+                if comment_url:
+                    update_data['review_comment_url'] = comment_url
+
+                # 使用 database 模組更新任務
+                self.db.update_task(pr_id, update_data)
+
+                self.logger.info(f"[后台线程] PR #{pr_number} 处理完成{f' (評分: {score}/100)' if score else ''}")
             else:
                 self._update_task_status(pr_id, "failed", 0, "審查生成失敗")
                 self.logger.error(f"[后台线程] PR #{pr_number} 审查生成失败")
@@ -1161,34 +1307,50 @@ def index():
                     if (data.tasks.length === 0) {
                         taskList.innerHTML = '<div class="empty-state">目前沒有任務</div>';
                     } else {
-                        taskList.innerHTML = data.tasks.map(task => `
-                            <div class="task-item">
-                                <div class="task-header">
-                                    <div>
-                                        <div class="task-title">
-                                            <a href="${task.pr_url}" target="_blank" style="color: #667eea; text-decoration: none;">
-                                                ${task.pr_title || 'PR #' + task.pr_number}
-                                            </a>
+                        taskList.innerHTML = data.tasks.map(task => {
+                            // 決定狀態文字 (如果已完成且有分數,顯示分數)
+                            let statusText = '';
+                            if (task.status === 'queued') {
+                                statusText = '等待中';
+                            } else if (task.status === 'processing') {
+                                statusText = '處理中';
+                            } else if (task.status === 'completed') {
+                                statusText = task.score ? `${task.score}/100 已完成` : '已完成';
+                            } else {
+                                statusText = '失敗';
+                            }
+
+                            // PR 連結顯示 (優先使用 review_comment_url)
+                            const prLink = task.review_comment_url
+                                ? `<a href="${task.review_comment_url}" target="_blank" style="color: #667eea; text-decoration: none;" title="查看審查評論">#${task.pr_number} 📝</a>`
+                                : `<a href="${task.pr_url}" target="_blank" style="color: #667eea; text-decoration: none;">#${task.pr_number}</a>`;
+
+                            return `
+                                <div class="task-item">
+                                    <div class="task-header">
+                                        <div>
+                                            <div class="task-title">
+                                                <a href="${task.pr_url}" target="_blank" style="color: #667eea; text-decoration: none;">
+                                                    ${task.pr_title || 'PR #' + task.pr_number}
+                                                </a>
+                                            </div>
+                                            <div class="task-meta">
+                                                ${task.repo} | PR: ${prLink} | 作者: ${task.pr_author} | 創建時間: ${new Date(task.created_at).toLocaleString('zh-TW')}
+                                            </div>
                                         </div>
-                                        <div class="task-meta">
-                                            ${task.repo} · @${task.pr_author} ·
-                                            ${new Date(task.created_at).toLocaleString('zh-TW')}
-                                        </div>
+                                        <span class="status-badge status-${task.status}">
+                                            ${statusText}
+                                        </span>
                                     </div>
-                                    <span class="status-badge status-${task.status}">
-                                        ${task.status === 'queued' ? '等待中' :
-                                          task.status === 'processing' ? '處理中' :
-                                          task.status === 'completed' ? '已完成' : '失敗'}
-                                    </span>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" style="width: ${task.progress}%"></div>
+                                    </div>
+                                    <div class="task-message">
+                                        ${task.message} (${task.progress}%)
+                                    </div>
                                 </div>
-                                <div class="progress-bar">
-                                    <div class="progress-fill" style="width: ${task.progress}%"></div>
-                                </div>
-                                <div class="task-message">
-                                    ${task.message} (${task.progress}%)
-                                </div>
-                            </div>
-                        `).join('');
+                            `;
+                        }).join('');
                     }
                 } catch (error) {
                     console.error('載入任務失敗:', error);

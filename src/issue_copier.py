@@ -484,10 +484,18 @@ class IssueCopier:
         try:
             repo = self.github.get_repo(source_repo_name)
             issue = repo.get_issue(issue_number)
+            source_url = issue.html_url
 
             # 構建評論內容
             comment_lines = ["## 🤖 Issue 已自動複製", ""]
-            comment_lines.append("此 issue 已自動複製到以下 repositories：")
+
+            # 來源 Issue（可點擊）
+            comment_lines.append(f"**來源 Issue:** [{source_repo_name}#{issue_number}]({source_url})")
+            comment_lines.append("")
+
+            # 同步到（每個都是可點擊的超連結）
+            target_count = len(target_urls)
+            comment_lines.append(f"**同步到:** ({target_count} 個倉庫)")
             comment_lines.append("")
 
             for url in target_urls:
@@ -497,7 +505,7 @@ class IssueCopier:
                 if len(parts) >= 7:
                     owner_repo = f"{parts[3]}/{parts[4]}"
                     issue_num = parts[6]
-                    comment_lines.append(f"- [{owner_repo} #{issue_num}]({url})")
+                    comment_lines.append(f"- [{owner_repo}#{issue_num}]({url})")
                 else:
                     comment_lines.append(f"- {url}")
 

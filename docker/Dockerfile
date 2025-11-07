@@ -59,6 +59,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY src/pr_monitor.py .
 COPY src/pr_reviewer.py .
 COPY src/database.py .
+COPY src/gateway.py .
 COPY config.yaml .
 
 # 複製 msmtp 配置示例（可選）

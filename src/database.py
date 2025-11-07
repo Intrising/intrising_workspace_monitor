@@ -52,9 +52,27 @@ class TaskDatabase:
                         updated_at TEXT NOT NULL,
                         completed_at TEXT,
                         error_message TEXT,
-                        review_content TEXT
+                        review_content TEXT,
+                        score INTEGER,
+                        review_comment_url TEXT
                     )
                 """)
+
+                # 為現有記錄添加 score 欄位（如果表已存在）
+                try:
+                    cursor.execute("ALTER TABLE review_tasks ADD COLUMN score INTEGER")
+                    self.logger.info("已為 review_tasks 表添加 score 欄位")
+                except Exception as e:
+                    # 欄位可能已存在，忽略錯誤
+                    pass
+
+                # 為現有記錄添加 review_comment_url 欄位（如果表已存在）
+                try:
+                    cursor.execute("ALTER TABLE review_tasks ADD COLUMN review_comment_url TEXT")
+                    self.logger.info("已為 review_tasks 表添加 review_comment_url 欄位")
+                except Exception as e:
+                    # 欄位可能已存在，忽略錯誤
+                    pass
 
                 # 創建索引以加速查詢
                 cursor.execute("""
@@ -172,6 +190,66 @@ class TaskDatabase:
                     ON webhook_events(event_type, created_at DESC)
                 """)
 
+                # 創建 issue 品質評分記錄表
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS issue_scores (
+                        score_id TEXT PRIMARY KEY,
+                        repo_name TEXT NOT NULL,
+                        issue_number INTEGER NOT NULL,
+                        comment_id INTEGER,
+                        event_type TEXT NOT NULL,
+                        content_type TEXT NOT NULL,
+                        title TEXT,
+                        body TEXT,
+                        author TEXT,
+                        issue_url TEXT,
+                        format_score INTEGER,
+                        format_feedback TEXT,
+                        content_score INTEGER,
+                        content_feedback TEXT,
+                        clarity_score INTEGER,
+                        clarity_feedback TEXT,
+                        actionability_score INTEGER,
+                        actionability_feedback TEXT,
+                        overall_score INTEGER,
+                        suggestions TEXT,
+                        user_feedback TEXT,
+                        status TEXT NOT NULL,
+                        error_message TEXT,
+                        created_at TEXT NOT NULL,
+                        completed_at TEXT
+                    )
+                """)
+
+                # Issue 評分記錄索引
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_score_created_at
+                    ON issue_scores(created_at DESC)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_score_repo
+                    ON issue_scores(repo_name, created_at DESC)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_score_issue
+                    ON issue_scores(repo_name, issue_number, created_at DESC)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_score_status
+                    ON issue_scores(status)
+                """)
+
+                # 為現有表添加 user_feedback 欄位（如果不存在）
+                try:
+                    cursor.execute("ALTER TABLE issue_scores ADD COLUMN user_feedback TEXT")
+                    self.logger.info("已為 issue_scores 表添加 user_feedback 欄位")
+                except Exception:
+                    # 欄位可能已存在，忽略錯誤
+                    pass
+
                 conn.commit()
                 self.logger.info(f"資料庫初始化完成: {self.db_path}")
 
@@ -263,7 +341,8 @@ class TaskDatabase:
                     # 允許更新的字段
                     updatable_fields = [
                         'status', 'progress', 'message', 'pr_title',
-                        'pr_author', 'pr_url', 'error_message', 'review_content'
+                        'pr_author', 'pr_url', 'error_message', 'review_content',
+                        'score', 'review_comment_url'
                     ]
 
                     for field in updatable_fields:
@@ -1082,4 +1161,264 @@ class TaskDatabase:
                 'by_type': {},
                 'by_status': {},
                 'by_service': {}
+            }
+
+    # ==================== Issue Scoring Methods ====================
+
+    def create_score_record(self, score_data: Dict) -> bool:
+        """
+        創建 issue 評分記錄
+
+        Args:
+            score_data: 評分數據字典
+
+        Returns:
+            bool: 是否創建成功
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                now = datetime.now().isoformat()
+
+                cursor.execute("""
+                    INSERT INTO issue_scores
+                    (score_id, repo_name, issue_number, comment_id, event_type, content_type,
+                     title, body, author, issue_url, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    score_data.get('score_id'),
+                    score_data.get('repo_name'),
+                    score_data.get('issue_number'),
+                    score_data.get('comment_id'),
+                    score_data.get('event_type'),
+                    score_data.get('content_type'),
+                    score_data.get('title'),
+                    score_data.get('body'),
+                    score_data.get('author'),
+                    score_data.get('issue_url'),
+                    score_data.get('status', 'queued'),
+                    now
+                ))
+
+                conn.commit()
+                self.logger.info(f"創建評分記錄: {score_data.get('score_id')}")
+                return True
+
+        except sqlite3.IntegrityError as e:
+            self.logger.warning(f"評分記錄已存在: {score_data.get('score_id')}")
+            return False
+        except Exception as e:
+            self.logger.error(f"創建評分記錄失敗: {e}")
+            return False
+
+    def update_score_record(self, score_id: str, update_data: Dict) -> bool:
+        """
+        更新評分記錄
+
+        Args:
+            score_id: 評分記錄 ID
+            update_data: 要更新的數據
+
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 構建 SET 子句
+                set_parts = []
+                values = []
+
+                for key, value in update_data.items():
+                    if key != 'score_id':
+                        set_parts.append(f"{key} = ?")
+                        values.append(value)
+
+                if not set_parts:
+                    return False
+
+                values.append(score_id)
+
+                query = f"UPDATE issue_scores SET {', '.join(set_parts)} WHERE score_id = ?"
+                cursor.execute(query, values)
+                conn.commit()
+
+                self.logger.info(f"更新評分記錄: {score_id}")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"更新評分記錄失敗: {e}")
+            return False
+
+    def update_score_title(self, repo_name: str, issue_number: int, new_title: str) -> bool:
+        """
+        更新指定 Issue 的所有評分記錄的標題
+
+        Args:
+            repo_name: 倉庫名稱
+            issue_number: Issue 編號
+            new_title: 新標題
+
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                query = """
+                    UPDATE issue_scores
+                    SET title = ?
+                    WHERE repo_name = ? AND issue_number = ?
+                """
+                cursor.execute(query, (new_title, repo_name, issue_number))
+                conn.commit()
+
+                updated_count = cursor.rowcount
+                if updated_count > 0:
+                    self.logger.info(f"已更新 {updated_count} 筆評分記錄的標題: {repo_name}#{issue_number}")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"更新評分記錄標題失敗: {e}")
+            return False
+
+    def get_score_record(self, score_id: str) -> Optional[Dict]:
+        """
+        獲取單個評分記錄
+
+        Args:
+            score_id: 評分記錄 ID
+
+        Returns:
+            評分記錄字典或 None
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM issue_scores WHERE score_id = ?", (score_id,))
+                row = cursor.fetchone()
+
+                if row:
+                    return dict(row)
+                return None
+
+        except Exception as e:
+            self.logger.error(f"獲取評分記錄失敗: {e}")
+            return None
+
+    def get_all_score_records(self, limit: int = 100, status: str = None, repo_name: str = None) -> List[Dict]:
+        """
+        獲取所有評分記錄
+
+        Args:
+            limit: 返回記錄數量限制
+            status: 按狀態過濾
+            repo_name: 按 repository 過濾
+
+        Returns:
+            評分記錄列表
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                query = "SELECT * FROM issue_scores WHERE 1=1"
+                params = []
+
+                if status:
+                    query += " AND status = ?"
+                    params.append(status)
+
+                if repo_name:
+                    query += " AND repo_name = ?"
+                    params.append(repo_name)
+
+                query += " ORDER BY created_at DESC LIMIT ?"
+                params.append(limit)
+
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            self.logger.error(f"獲取評分記錄失敗: {e}")
+            return []
+
+    def get_score_stats(self, repo_name: str = None) -> Dict:
+        """
+        獲取評分統計
+
+        Args:
+            repo_name: 按 repository 過濾
+
+        Returns:
+            統計數據字典
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                where_clause = ""
+                params = []
+
+                if repo_name:
+                    where_clause = "WHERE repo_name = ?"
+                    params.append(repo_name)
+
+                # 總評分數
+                cursor.execute(f"SELECT COUNT(*) FROM issue_scores {where_clause}", params)
+                total = cursor.fetchone()[0]
+
+                # 按狀態統計
+                cursor.execute(f"""
+                    SELECT status, COUNT(*) as count
+                    FROM issue_scores
+                    {where_clause}
+                    GROUP BY status
+                """, params)
+                by_status = {row[0]: row[1] for row in cursor.fetchall()}
+
+                # 按內容類型統計
+                cursor.execute(f"""
+                    SELECT content_type, COUNT(*) as count
+                    FROM issue_scores
+                    {where_clause}
+                    GROUP BY content_type
+                """, params)
+                by_type = {row[0]: row[1] for row in cursor.fetchall()}
+
+                # 平均分數（只計算已完成的）
+                cursor.execute(f"""
+                    SELECT AVG(overall_score) as avg_score
+                    FROM issue_scores
+                    {where_clause}
+                    {"AND" if where_clause else "WHERE"} status = 'completed' AND overall_score IS NOT NULL
+                """, params)
+                result = cursor.fetchone()
+                avg_score = round(result[0], 1) if result[0] is not None else None
+
+                return {
+                    'total': total,
+                    'queued': by_status.get('queued', 0),
+                    'processing': by_status.get('processing', 0),
+                    'completed': by_status.get('completed', 0),
+                    'failed': by_status.get('failed', 0),
+                    'by_type': by_type,
+                    'average_score': avg_score
+                }
+
+        except Exception as e:
+            self.logger.error(f"獲取評分統計失敗: {e}")
+            return {
+                'total': 0,
+                'queued': 0,
+                'processing': 0,
+                'completed': 0,
+                'failed': 0,
+                'by_type': {},
+                'average_score': None
             }

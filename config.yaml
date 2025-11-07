@@ -139,3 +139,42 @@ issue_copy:
 
   # 是否在原 issue 添加評論（說明已複製到哪裡）
   add_copy_comment: false
+
+# Issue 品質評分配置
+issue_scoring:
+  # 是否啟用 issue 品質評分功能
+  enabled: true
+
+  # 要評分的目標 repositories
+  target_repos:
+    - "Intrising/QA-Switch-OS5"
+    - "Intrising/test-cloud"
+    - "Intrising/QA-Switch-OS6"
+    - "Intrising/QA-Video-switch"
+    - "Intrising/QA-Switch-OS3OS4"
+    - "Intrising/QA-Switch-OS2"
+    - "Intrising/QA-Viewer"
+    - "Intrising/test-switch"
+
+  # 觸發評分的 issue 動作
+  triggers:
+    - opened        # Issue 被創建時評分（只評分新建立的 Issue）
+    # - edited      # 已停用：不評分編輯後的 Issue
+
+  # 觸發評分的 comment 動作（只評分測試結果類的評論）
+  comment_triggers:
+    - created       # 評論被創建時檢查是否為測試結果
+    # - edited      # 已停用：不評分編輯後的評論
+
+  # 評分維度
+  scoring_criteria:
+    - "格式正確性：標題、描述、步驟是否符合規範"
+    - "內容完整性：是否包含必要資訊（重現步驟、預期結果、實際結果、環境資訊等）"
+    - "清晰度：描述是否清楚明確，是否容易理解"
+    - "可操作性：開發人員是否能根據描述重現問題"
+
+  # 是否自動在 issue/comment 中回覆評分結果
+  auto_comment: true
+
+  # 回覆語言
+  language: "zh-TW"
