@@ -1703,6 +1703,9 @@ def all_scores_template() -> str:
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>評分統計 - Workspace Monitor</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
@@ -1861,6 +1864,24 @@ def all_scores_template() -> str:
                     box-shadow: 0 0 40px 8px rgba(255, 152, 0, 1), 0 0 80px 15px rgba(255, 152, 0, 0.6);
                 }
             }
+            .export-btn {
+                padding: 8px 16px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }
+            .export-btn:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            }
+            .export-btn:active {
+                transform: translateY(0);
+            }
         </style>
     </head>
     <body>
@@ -1878,6 +1899,24 @@ def all_scores_template() -> str:
             </div>
 
             <div class="card">
+                <h2 style="margin-bottom: 20px;">統計圖表</h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px;">
+                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <h3 style="text-align: center; margin-bottom: 15px; color: #333;">類型分布</h3>
+                        <canvas id="typeChart" style="max-height: 250px;"></canvas>
+                    </div>
+                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <h3 style="text-align: center; margin-bottom: 15px; color: #333;">分數分布</h3>
+                        <canvas id="scoreChart" style="max-height: 250px;"></canvas>
+                    </div>
+                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        <h3 style="text-align: center; margin-bottom: 15px; color: #333;">人員貢獻占比</h3>
+                        <canvas id="authorChart" style="max-height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
                 <h2 style="margin-bottom: 20px;">統計數據</h2>
                 <div class="stats" id="stats">
                     <div class="loading">載入中...</div>
@@ -1892,7 +1931,13 @@ def all_scores_template() -> str:
             </div>
 
             <div class="card">
-                <h2 style="margin-bottom: 15px;">評分記錄</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2 style="margin: 0;">評分記錄</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="exportPDF(event)" class="export-btn">📄 匯出 PDF 報表</button>
+                        <button onclick="exportCompleteCSV()" class="export-btn">📥 匯出完整報表 (CSV)</button>
+                    </div>
+                </div>
                 <div class="filter-tabs" id="filter-tabs">
                     <button class="filter-tab active" data-filter="all">全部</button>
                     <button class="filter-tab" data-filter="issue">Issue</button>
@@ -1988,12 +2033,156 @@ def all_scores_template() -> str:
 
                     document.getElementById('author-stats').innerHTML = authorStatsHtml || '<p style="text-align: center; color: #666;">暫無人員統計</p>';
 
+                    // 繪製圓餅圖
+                    renderCharts(issueCount, prCount, highScores, lowScores, authorStats);
+
                     // 顯示評分列表
                     renderScores();
 
                 } catch (error) {
                     document.getElementById('scores').innerHTML = '<p style="text-align: center; color: red;">載入失敗: ' + error.message + '</p>';
                 }
+            }
+
+            // 儲存圖表實例以便更新
+            let typeChart = null;
+            let scoreChart = null;
+            let authorChart = null;
+
+            function renderCharts(issueCount, prCount, highScores, lowScores, authorStats) {
+                const mediumScores = allScores.filter(s => s.score >= 60 && s.score < 80).length;
+
+                // 1. 類型分布圓餅圖
+                const typeCtx = document.getElementById('typeChart').getContext('2d');
+                if (typeChart) typeChart.destroy();
+                typeChart = new Chart(typeCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: ['Issue', 'PR'],
+                        datasets: [{
+                            data: [issueCount, prCount],
+                            backgroundColor: ['#3498db', '#9b59b6'],
+                            borderWidth: 2,
+                            borderColor: '#fff'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    padding: 15,
+                                    font: { size: 12 }
+                                }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const total = issueCount + prCount;
+                                        const percent = Math.round((context.parsed / total) * 100);
+                                        return context.label + ': ' + context.parsed + ' (' + percent + '%)';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // 2. 分數分布圓餅圖
+                const scoreCtx = document.getElementById('scoreChart').getContext('2d');
+                if (scoreChart) scoreChart.destroy();
+                scoreChart = new Chart(scoreCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: ['高分 (≥80)', '中分 (60-79)', '低分 (<60)'],
+                        datasets: [{
+                            data: [highScores, mediumScores, lowScores],
+                            backgroundColor: ['#6bcf7f', '#ffd93d', '#e74c3c'],
+                            borderWidth: 2,
+                            borderColor: '#fff'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    padding: 15,
+                                    font: { size: 12 }
+                                }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const total = highScores + mediumScores + lowScores;
+                                        const percent = Math.round((context.parsed / total) * 100);
+                                        return context.label + ': ' + context.parsed + ' (' + percent + '%)';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // 3. 人員貢獻占比圓餅圖 (顯示前8名,其他合併)
+                const topAuthors = authorStats.slice(0, 8);
+                const othersCount = authorStats.slice(8).reduce((sum, a) => sum + a.count, 0);
+
+                const authorLabels = topAuthors.map(a => a.author);
+                const authorData = topAuthors.map(a => a.count);
+
+                if (othersCount > 0) {
+                    authorLabels.push('其他');
+                    authorData.push(othersCount);
+                }
+
+                // 生成漂亮的顏色
+                const colors = [
+                    '#3498db', '#9b59b6', '#1abc9c', '#f39c12',
+                    '#e74c3c', '#34495e', '#16a085', '#27ae60',
+                    '#95a5a6'
+                ];
+
+                const authorCtx = document.getElementById('authorChart').getContext('2d');
+                if (authorChart) authorChart.destroy();
+                authorChart = new Chart(authorCtx, {
+                    type: 'pie',
+                    data: {
+                        labels: authorLabels,
+                        datasets: [{
+                            data: authorData,
+                            backgroundColor: colors,
+                            borderWidth: 2,
+                            borderColor: '#fff'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: {
+                                    padding: 10,
+                                    font: { size: 11 }
+                                }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const total = authorData.reduce((sum, v) => sum + v, 0);
+                                        const percent = Math.round((context.parsed / total) * 100);
+                                        return context.label + ': ' + context.parsed + ' 筆 (' + percent + '%)';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
             }
 
             function renderScores() {
@@ -2070,6 +2259,447 @@ def all_scores_template() -> str:
                     });
                 }
                 renderScores();
+            }
+
+            // 匯出 PDF 報表函數(使用圖片替代中文文字)
+            async function exportPDF(event) {
+                const button = event.currentTarget;
+                const originalText = button.textContent;
+
+                try {
+                    button.textContent = '⏳ 生成中...';
+                    button.disabled = true;
+
+                    if (allScores.length === 0) {
+                        alert('目前沒有可匯出的資料');
+                        return;
+                    }
+
+                    // 使用 jsPDF
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF('p', 'mm', 'a4');
+                    let yPos = 20;
+                    const pageWidth = doc.internal.pageSize.getWidth();
+                    const pageHeight = doc.internal.pageSize.getHeight();
+
+                    // 計算日期範圍
+                    const dates = allScores.map(s => new Date(s.created_at)).sort((a, b) => a - b);
+                    const startDate = dates[0].toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                    const endDate = dates[dates.length - 1].toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                    const dateRange = `${startDate} - ${endDate}`;
+
+                    // 計算統計數據
+                    const totalScores = allScores.length;
+                    const issueCount = allScores.filter(s => s.type === 'issue').length;
+                    const prCount = allScores.filter(s => s.type === 'pr').length;
+                    const highScores = allScores.filter(s => s.score >= 80).length;
+                    const mediumScores = allScores.filter(s => s.score >= 60 && s.score < 80).length;
+                    const lowScores = allScores.filter(s => s.score < 60).length;
+
+                    // 計算每個人的統計
+                    const byAuthor = {};
+                    allScores.forEach(s => {
+                        if (!byAuthor[s.author]) {
+                            byAuthor[s.author] = { total: 0, sum: 0 };
+                        }
+                        byAuthor[s.author].total++;
+                        byAuthor[s.author].sum += s.score || 0;
+                    });
+
+                    const authorStats = Object.entries(byAuthor)
+                        .map(([author, data]) => ({
+                            author,
+                            count: data.total,
+                            avg: Math.round(data.sum / data.total)
+                        }))
+                        .sort((a, b) => b.avg - a.avg);
+
+                    // 第一頁：標題和日期範圍
+                    doc.setFontSize(20);
+                    doc.text('Scoring Report', pageWidth / 2, yPos, { align: 'center' });
+                    yPos += 10;
+                    doc.setFontSize(10);
+                    doc.text(dateRange, pageWidth / 2, yPos, { align: 'center' });
+                    yPos += 15;
+
+                    // 擷取圖表為圖片並加入 PDF（改進版：加上日期範圍）
+                    const chartContainers = [
+                        { id: 'typeChart', title: `Type Distribution (${dateRange})` },
+                        { id: 'scoreChart', title: 'Score Distribution' },
+                        { id: 'authorChart', title: 'Author Contribution' }
+                    ];
+
+                    for (const chart of chartContainers) {
+                        const canvas = document.getElementById(chart.id);
+                        if (canvas) {
+                            try {
+                                // 使用 html2canvas 轉換圖表
+                                const chartImage = await html2canvas(canvas.parentElement, {
+                                    backgroundColor: '#ffffff',
+                                    scale: 2
+                                });
+
+                                const imgData = chartImage.toDataURL('image/png');
+                                const imgWidth = 90;
+                                const imgHeight = (chartImage.height * imgWidth) / chartImage.width;
+
+                                // 檢查是否需要換頁
+                                if (yPos + imgHeight > pageHeight - 20) {
+                                    doc.addPage();
+                                    yPos = 20;
+                                }
+
+                                doc.setFontSize(12);
+                                doc.text(chart.title, pageWidth / 2, yPos, { align: 'center' });
+                                yPos += 8;
+                                doc.addImage(imgData, 'PNG', (pageWidth - imgWidth) / 2, yPos, imgWidth, imgHeight);
+                                yPos += imgHeight + 15;
+                            } catch (err) {
+                                console.warn(`Failed to capture chart ${chart.id}:`, err);
+                            }
+                        }
+                    }
+
+                    // 新頁面：統計摘要（加入每個人的平均分數和數量）
+                    doc.addPage();
+                    yPos = 20;
+                    doc.setFontSize(16);
+                    doc.text('Statistics Summary', pageWidth / 2, yPos, { align: 'center' });
+                    yPos += 15;
+
+                    // 總體統計
+                    doc.setFontSize(11);
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Overall Statistics:', 20, yPos);
+                    yPos += 7;
+                    doc.setFont(undefined, 'normal');
+
+                    const stats = [
+                        `Total Scores: ${totalScores}`,
+                        `Issues: ${issueCount} (${Math.round((issueCount/totalScores)*100)}%)`,
+                        `PRs: ${prCount} (${Math.round((prCount/totalScores)*100)}%)`,
+                        '',
+                        `High Scores (>=80): ${highScores} (${Math.round((highScores/totalScores)*100)}%)`,
+                        `Medium Scores (60-79): ${mediumScores} (${Math.round((mediumScores/totalScores)*100)}%)`,
+                        `Low Scores (<60): ${lowScores} (${Math.round((lowScores/totalScores)*100)}%)`
+                    ];
+
+                    stats.forEach(line => {
+                        doc.text(line, 25, yPos);
+                        yPos += 7;
+                    });
+
+                    yPos += 5;
+
+                    // 每個人的平均分數和數量（改進版：更漂亮的表格）
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Author Statistics:', 20, yPos);
+                    yPos += 10;
+
+                    // 繪製表格框線和背景
+                    const tableStartY = yPos;
+                    const rowHeight = 7;
+                    const colWidths = [15, 60, 30, 25]; // Rank, Author, Avg Score, Count
+                    const colStartX = [15, 30, 90, 120];
+
+                    // 表頭背景
+                    doc.setFillColor(70, 130, 180); // Steel blue
+                    doc.rect(15, yPos - 5, 130, rowHeight, 'F');
+
+                    // 表頭文字（白色）
+                    doc.setTextColor(255, 255, 255);
+                    doc.setFontSize(10);
+                    doc.text('Rank', colStartX[0] + 2, yPos);
+                    doc.text('Author', colStartX[1] + 2, yPos);
+                    doc.text('Avg Score', colStartX[2] + 2, yPos);
+                    doc.text('Count', colStartX[3] + 2, yPos);
+                    yPos += rowHeight;
+
+                    // 恢復黑色文字
+                    doc.setTextColor(0, 0, 0);
+                    doc.setFont(undefined, 'normal');
+                    doc.setFontSize(9);
+
+                    // 每個作者的數據（帶條紋背景）
+                    authorStats.forEach((stat, index) => {
+                        if (yPos > pageHeight - 20) {
+                            doc.addPage();
+                            yPos = 20;
+                        }
+
+                        // 交替背景色
+                        if (index % 2 === 0) {
+                            doc.setFillColor(245, 245, 245); // Light gray
+                            doc.rect(15, yPos - 5, 130, rowHeight, 'F');
+                        }
+
+                        // 排名（根據分數設定顏色）
+                        if (index === 0) {
+                            doc.setTextColor(218, 165, 32); // Gold
+                            doc.setFont(undefined, 'bold');
+                        } else if (index === 1) {
+                            doc.setTextColor(192, 192, 192); // Silver
+                            doc.setFont(undefined, 'bold');
+                        } else if (index === 2) {
+                            doc.setTextColor(205, 127, 50); // Bronze
+                            doc.setFont(undefined, 'bold');
+                        } else {
+                            doc.setTextColor(0, 0, 0);
+                            doc.setFont(undefined, 'normal');
+                        }
+
+                        doc.text(String(index + 1), colStartX[0] + 5, yPos);
+
+                        // 其他欄位（黑色）
+                        doc.setTextColor(0, 0, 0);
+                        doc.setFont(undefined, 'normal');
+                        doc.text((stat.author || '').substring(0, 28), colStartX[1] + 2, yPos);
+
+                        // 平均分數（根據分數設定顏色）
+                        if (stat.avg >= 80) {
+                            doc.setTextColor(0, 128, 0); // Green
+                        } else if (stat.avg >= 60) {
+                            doc.setTextColor(255, 140, 0); // Orange
+                        } else {
+                            doc.setTextColor(255, 0, 0); // Red
+                        }
+                        doc.setFont(undefined, 'bold');
+                        doc.text(String(stat.avg), colStartX[2] + 2, yPos);
+
+                        doc.setTextColor(0, 0, 0);
+                        doc.setFont(undefined, 'normal');
+                        doc.text(String(stat.count), colStartX[3] + 2, yPos);
+
+                        yPos += rowHeight;
+                    });
+
+                    // 繪製表格外框
+                    doc.setDrawColor(0, 0, 0);
+                    doc.rect(15, tableStartY - 5, 130, (authorStats.length + 1) * rowHeight);
+
+                    // 新頁面：全部詳細記錄
+                    doc.addPage();
+                    yPos = 20;
+                    doc.setFontSize(16);
+                    doc.text(`All Records (${totalScores} items)`, pageWidth / 2, yPos, { align: 'center' });
+                    yPos += 15;
+
+                    doc.setFontSize(8);
+                    const records = allScores; // 全部記錄，不限制數量
+
+                    // 表頭
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Type', 12, yPos);
+                    doc.text('Score', 30, yPos);
+                    doc.text('Author', 48, yPos);
+                    doc.text('Repo', 85, yPos);
+                    doc.text('Num', 135, yPos);
+                    doc.text('Date', 155, yPos);
+                    yPos += 5;
+                    doc.setFont(undefined, 'normal');
+
+                    // 記錄（Num 欄位加上超連結）
+                    records.forEach((score, index) => {
+                        if (yPos > pageHeight - 15) {
+                            doc.addPage();
+                            yPos = 20;
+                            // 重新繪製表頭
+                            doc.setFont(undefined, 'bold');
+                            doc.text('Type', 12, yPos);
+                            doc.text('Score', 30, yPos);
+                            doc.text('Author', 48, yPos);
+                            doc.text('Repo', 85, yPos);
+                            doc.text('Num', 135, yPos);
+                            doc.text('Date', 155, yPos);
+                            yPos += 5;
+                            doc.setFont(undefined, 'normal');
+                        }
+
+                        const dateStr = new Date(score.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+                        doc.text(score.type === 'issue' ? 'Issue' : 'PR', 12, yPos);
+                        doc.text(String(score.score || 0), 30, yPos);
+                        doc.text((score.author || '').substring(0, 18), 48, yPos);
+                        doc.text((score.repo || '').split('/').pop().substring(0, 25), 85, yPos);
+
+                        // Num 欄位加上超連結（藍色、底線）
+                        const numText = String(score.number || '');
+                        if (score.url) {
+                            doc.setTextColor(0, 0, 255); // Blue
+                            doc.textWithLink(numText, 135, yPos, { url: score.url });
+                            doc.setTextColor(0, 0, 0); // Reset to black
+                        } else {
+                            doc.text(numText, 135, yPos);
+                        }
+
+                        doc.text(dateStr, 155, yPos);
+                        yPos += 5;
+                    });
+
+                    // 儲存 PDF
+                    const now = new Date();
+                    const timestamp = now.toISOString().split('T')[0];
+                    doc.save(`Scoring_Report_${timestamp}.pdf`);
+
+                } catch (error) {
+                    console.error('PDF 生成失敗:', error);
+                    alert('PDF 生成失敗: ' + error.message);
+                } finally {
+                    button.textContent = originalText;
+                    button.disabled = false;
+                }
+            }
+
+            // 匯出完整報表 CSV 函數(包含統計摘要和詳細記錄)
+            function exportCompleteCSV() {
+                if (allScores.length === 0) {
+                    alert('目前沒有可匯出的資料');
+                    return;
+                }
+
+                // 計算統計數據
+                const totalScores = allScores.length;
+                const totalSum = allScores.reduce((sum, s) => sum + (s.score || 0), 0);
+                const avgScore = totalScores > 0 ? Math.round(totalSum / totalScores) : 0;
+                const issueCount = allScores.filter(s => s.type === 'issue').length;
+                const prCount = allScores.filter(s => s.type === 'pr').length;
+                const highScores = allScores.filter(s => s.score >= 80).length;
+                const mediumScores = allScores.filter(s => s.score >= 60 && s.score < 80).length;
+                const lowScores = allScores.filter(s => s.score < 60).length;
+
+                // 按人員統計
+                const byAuthor = {};
+                allScores.forEach(s => {
+                    if (!byAuthor[s.author]) {
+                        byAuthor[s.author] = {
+                            total: 0,
+                            sum: 0,
+                            high: 0,
+                            medium: 0,
+                            low: 0,
+                            issues: 0,
+                            prs: 0
+                        };
+                    }
+                    byAuthor[s.author].total++;
+                    byAuthor[s.author].sum += s.score || 0;
+                    if (s.score >= 80) byAuthor[s.author].high++;
+                    else if (s.score >= 60) byAuthor[s.author].medium++;
+                    else byAuthor[s.author].low++;
+
+                    if (s.type === 'issue') byAuthor[s.author].issues++;
+                    else byAuthor[s.author].prs++;
+                });
+
+                const authorStats = Object.entries(byAuthor)
+                    .map(([author, data]) => ({
+                        author,
+                        count: data.total,
+                        avg: Math.round(data.sum / data.total),
+                        high: data.high,
+                        medium: data.medium,
+                        low: data.low,
+                        issues: data.issues,
+                        prs: data.prs,
+                        highPercent: Math.round((data.high / data.total) * 100)
+                    }))
+                    .sort((a, b) => b.avg - a.avg);
+
+                // 建立 CSV 內容
+                const csvRows = [];
+
+                // 報表標題
+                csvRows.push('評分完整報表');
+                csvRows.push(`生成時間,${new Date().toLocaleString('zh-TW')}`);
+                csvRows.push('');
+                csvRows.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                csvRows.push('');
+
+                // 第一部分：總體統計
+                csvRows.push('📊 統計摘要');
+                csvRows.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                csvRows.push('');
+                csvRows.push('統計項目,數值,占比');
+                csvRows.push(`總評分數,${totalScores},100%`);
+                csvRows.push(`平均分數,${avgScore},—`);
+                csvRows.push('');
+                csvRows.push('【類型分布】');
+                csvRows.push(`Issue 評分,${issueCount},${Math.round((issueCount/totalScores)*100)}%`);
+                csvRows.push(`PR 評分,${prCount},${Math.round((prCount/totalScores)*100)}%`);
+                csvRows.push('');
+                csvRows.push('【分數分布】');
+                csvRows.push(`高分 (≥80),${highScores},${Math.round((highScores/totalScores)*100)}%`);
+                csvRows.push(`中分 (60-79),${mediumScores},${Math.round((mediumScores/totalScores)*100)}%`);
+                csvRows.push(`低分 (<60),${lowScores},${Math.round((lowScores/totalScores)*100)}%`);
+                csvRows.push('');
+                csvRows.push('');
+
+                // 第二部分：人員統計
+                csvRows.push('👥 人員統計');
+                csvRows.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                csvRows.push('');
+                csvRows.push('排名,作者,平均分數,總數,高分,中分,低分,Issue,PR,高分率');
+                authorStats.forEach((stat, index) => {
+                    csvRows.push(`${index + 1},${stat.author},${stat.avg},${stat.count},${stat.high},${stat.medium},${stat.low},${stat.issues},${stat.prs},${stat.highPercent}%`);
+                });
+                csvRows.push('');
+                csvRows.push('');
+
+                // 第三部分：詳細記錄
+                csvRows.push('📋 詳細記錄');
+                csvRows.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                csvRows.push('');
+                csvRows.push('類型,評分,等級,作者,倉庫,編號,標題,建立日期,建立時間,URL');
+
+                allScores.forEach(score => {
+                    // 格式化日期時間
+                    const dateObj = new Date(score.created_at);
+                    const date = dateObj.toLocaleDateString('zh-TW');
+                    const time = dateObj.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+
+                    // 判斷等級
+                    let grade = '低分';
+                    if (score.score >= 80) grade = '高分';
+                    else if (score.score >= 60) grade = '中分';
+
+                    const row = [
+                        score.type === 'issue' ? 'Issue' : 'PR',
+                        score.score || 0,
+                        grade,
+                        score.author || '',
+                        score.repo || '',
+                        score.number || '',
+                        `"${(score.title || '').replace(/"/g, '""')}"`,
+                        date,
+                        time,
+                        score.url || ''
+                    ];
+                    csvRows.push(row.join(','));
+                });
+
+                csvRows.push('');
+                csvRows.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                csvRows.push(`報表結束 | 總計 ${totalScores} 筆記錄`);
+
+                // 建立 CSV 內容
+                const csvContent = csvRows.join('\\n');
+
+                // 建立 Blob 並觸發下載
+                const blob = new Blob(['\\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+
+                // 生成檔案名稱
+                const now = new Date();
+                const timestamp = now.toISOString().split('T')[0];
+                const filename = `評分完整報表_${timestamp}.csv`;
+
+                link.setAttribute('href', url);
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
             }
 
             // 過濾器事件
