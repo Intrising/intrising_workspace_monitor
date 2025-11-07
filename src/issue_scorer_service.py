@@ -537,7 +537,14 @@ class IssueScorerService:
             issue_data = event_data.get('issue', {})
             title = issue_data.get('title', '')
             body = issue_data.get('body', '')
-            author = issue_data.get('user', {}).get('login', '')
+
+            # 使用 sender (執行動作的人) 而不是 issue.user (原始作者)
+            # 這樣轉貼的 Issue 會以轉貼者作為人員統計依據
+            author = event_data.get('sender', {}).get('login', '')
+            if not author:
+                # 如果沒有 sender,才使用原始作者作為備援
+                author = issue_data.get('user', {}).get('login', '')
+
             issue_url = issue_data.get('html_url', '')
             comment_id = None
 
@@ -564,7 +571,14 @@ class IssueScorerService:
             issue_data = event_data.get('issue', {})
             title = issue_data.get('title', '')  # 保留 issue 標題作為參考
             body = comment_data.get('body', '')
-            author = comment_data.get('user', {}).get('login', '')
+
+            # 使用 sender (執行動作的人) 而不是 comment.user (原始作者)
+            # 這樣轉貼評論時會以轉貼者作為人員統計依據
+            author = event_data.get('sender', {}).get('login', '')
+            if not author:
+                # 如果沒有 sender,才使用原始作者作為備援
+                author = comment_data.get('user', {}).get('login', '')
+
             issue_url = comment_data.get('html_url', '')
             comment_id = comment_data.get('id')
 
