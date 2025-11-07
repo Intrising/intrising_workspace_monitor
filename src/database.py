@@ -1430,3 +1430,375 @@ class TaskDatabase:
                 'by_type': {},
                 'average_score': None
             }
+
+    # ==================== Author History & Statistics Methods ====================
+
+    def get_author_pr_history(self, author: str, limit: int = 20) -> Dict:
+        """
+        獲取作者的 PR 審查歷史和統計
+
+        Args:
+            author: PR 作者名稱
+            limit: 返回的最大記錄數
+
+        Returns:
+            包含歷史記錄和統計的字典
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 獲取作者的 PR 記錄
+                cursor.execute("""
+                    SELECT task_id, pr_number, repo, pr_title, pr_url, score,
+                           status, created_at, completed_at, review_comment_url
+                    FROM review_tasks
+                    WHERE pr_author = ? AND status = 'completed'
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (author, limit))
+
+                records = [dict(row) for row in cursor.fetchall()]
+
+                # 計算統計
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_prs,
+                        AVG(CASE WHEN score IS NOT NULL THEN score END) as avg_score,
+                        MIN(CASE WHEN score IS NOT NULL THEN score END) as min_score,
+                        MAX(CASE WHEN score IS NOT NULL THEN score END) as max_score,
+                        COUNT(CASE WHEN score IS NOT NULL THEN 1 END) as scored_prs
+                    FROM review_tasks
+                    WHERE pr_author = ? AND status = 'completed'
+                """, (author,))
+
+                stats_row = cursor.fetchone()
+                stats = {
+                    'total_prs': stats_row['total_prs'] or 0,
+                    'avg_score': round(stats_row['avg_score'], 1) if stats_row['avg_score'] else None,
+                    'min_score': stats_row['min_score'],
+                    'max_score': stats_row['max_score'],
+                    'scored_prs': stats_row['scored_prs'] or 0
+                }
+
+                # 獲取最近5次的分數趨勢（用於判斷進步或退步）
+                cursor.execute("""
+                    SELECT score
+                    FROM review_tasks
+                    WHERE pr_author = ? AND status = 'completed' AND score IS NOT NULL
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                """, (author,))
+
+                recent_scores = [row['score'] for row in cursor.fetchall()]
+
+                # 計算趨勢（如果有足夠的數據）
+                trend = None
+                if len(recent_scores) >= 3:
+                    # 簡單的趨勢判斷：比較前半和後半的平均分
+                    mid = len(recent_scores) // 2
+                    recent_avg = sum(recent_scores[:mid]) / mid
+                    older_avg = sum(recent_scores[mid:]) / (len(recent_scores) - mid)
+
+                    if recent_avg > older_avg + 5:
+                        trend = 'improving'  # 進步中
+                    elif recent_avg < older_avg - 5:
+                        trend = 'declining'  # 退步中
+                    else:
+                        trend = 'stable'  # 穩定
+
+                stats['trend'] = trend
+                stats['recent_scores'] = recent_scores
+
+                return {
+                    'records': records,
+                    'stats': stats
+                }
+
+        except Exception as e:
+            self.logger.error(f"獲取作者 PR 歷史失敗: {e}")
+            return {
+                'records': [],
+                'stats': {
+                    'total_prs': 0,
+                    'avg_score': None,
+                    'min_score': None,
+                    'max_score': None,
+                    'scored_prs': 0,
+                    'trend': None,
+                    'recent_scores': []
+                }
+            }
+
+    def get_author_issue_history(self, author: str, limit: int = 20) -> Dict:
+        """
+        獲取作者的 Issue 評分歷史和統計
+
+        Args:
+            author: Issue 作者名稱
+            limit: 返回的最大記錄數
+
+        Returns:
+            包含歷史記錄和統計的字典
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 獲取作者的 Issue 評分記錄（排除已忽略的）
+                cursor.execute("""
+                    SELECT score_id, repo_name, issue_number, content_type,
+                           title, issue_url, overall_score, format_score,
+                           content_score, clarity_score, actionability_score,
+                           status, created_at, completed_at
+                    FROM issue_scores
+                    WHERE author = ? AND status = 'completed' AND (ignored IS NULL OR ignored = 0)
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (author, limit))
+
+                records = [dict(row) for row in cursor.fetchall()]
+
+                # 計算統計
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_issues,
+                        AVG(overall_score) as avg_overall,
+                        AVG(format_score) as avg_format,
+                        AVG(content_score) as avg_content,
+                        AVG(clarity_score) as avg_clarity,
+                        AVG(actionability_score) as avg_actionability,
+                        MIN(overall_score) as min_score,
+                        MAX(overall_score) as max_score
+                    FROM issue_scores
+                    WHERE author = ? AND status = 'completed' AND (ignored IS NULL OR ignored = 0)
+                """, (author,))
+
+                stats_row = cursor.fetchone()
+                stats = {
+                    'total_issues': stats_row['total_issues'] or 0,
+                    'avg_overall': round(stats_row['avg_overall'], 1) if stats_row['avg_overall'] else None,
+                    'avg_format': round(stats_row['avg_format'], 1) if stats_row['avg_format'] else None,
+                    'avg_content': round(stats_row['avg_content'], 1) if stats_row['avg_content'] else None,
+                    'avg_clarity': round(stats_row['avg_clarity'], 1) if stats_row['avg_clarity'] else None,
+                    'avg_actionability': round(stats_row['avg_actionability'], 1) if stats_row['avg_actionability'] else None,
+                    'min_score': stats_row['min_score'],
+                    'max_score': stats_row['max_score']
+                }
+
+                # 獲取最近5次的分數趨勢
+                cursor.execute("""
+                    SELECT overall_score
+                    FROM issue_scores
+                    WHERE author = ? AND status = 'completed' AND (ignored IS NULL OR ignored = 0)
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                """, (author,))
+
+                recent_scores = [row['overall_score'] for row in cursor.fetchall()]
+
+                # 計算趨勢
+                trend = None
+                if len(recent_scores) >= 3:
+                    mid = len(recent_scores) // 2
+                    recent_avg = sum(recent_scores[:mid]) / mid
+                    older_avg = sum(recent_scores[mid:]) / (len(recent_scores) - mid)
+
+                    if recent_avg > older_avg + 5:
+                        trend = 'improving'
+                    elif recent_avg < older_avg - 5:
+                        trend = 'declining'
+                    else:
+                        trend = 'stable'
+
+                stats['trend'] = trend
+                stats['recent_scores'] = recent_scores
+
+                # 按內容類型統計
+                cursor.execute("""
+                    SELECT content_type, COUNT(*) as count, AVG(overall_score) as avg_score
+                    FROM issue_scores
+                    WHERE author = ? AND status = 'completed' AND (ignored IS NULL OR ignored = 0)
+                    GROUP BY content_type
+                """, (author,))
+
+                by_type = {}
+                for row in cursor.fetchall():
+                    by_type[row['content_type']] = {
+                        'count': row['count'],
+                        'avg_score': round(row['avg_score'], 1) if row['avg_score'] else None
+                    }
+
+                stats['by_content_type'] = by_type
+
+                return {
+                    'records': records,
+                    'stats': stats
+                }
+
+        except Exception as e:
+            self.logger.error(f"獲取作者 Issue 歷史失敗: {e}")
+            return {
+                'records': [],
+                'stats': {
+                    'total_issues': 0,
+                    'avg_overall': None,
+                    'avg_format': None,
+                    'avg_content': None,
+                    'avg_clarity': None,
+                    'avg_actionability': None,
+                    'min_score': None,
+                    'max_score': None,
+                    'trend': None,
+                    'recent_scores': [],
+                    'by_content_type': {}
+                }
+            }
+
+    def get_author_combined_stats(self, author: str) -> Dict:
+        """
+        獲取作者的綜合統計（PR + Issue）
+
+        Args:
+            author: 作者名稱
+
+        Returns:
+            綜合統計字典
+        """
+        try:
+            pr_history = self.get_author_pr_history(author, limit=10)
+            issue_history = self.get_author_issue_history(author, limit=10)
+
+            return {
+                'author': author,
+                'pr_stats': pr_history['stats'],
+                'issue_stats': issue_history['stats'],
+                'pr_recent_records': pr_history['records'][:5],  # 最近5個 PR
+                'issue_recent_records': issue_history['records'][:5]  # 最近5個 Issue
+            }
+
+        except Exception as e:
+            self.logger.error(f"獲取作者綜合統計失敗: {e}")
+            return {
+                'author': author,
+                'pr_stats': {},
+                'issue_stats': {},
+                'pr_recent_records': [],
+                'issue_recent_records': []
+            }
+
+    def get_common_issues_by_author(self, author: str, repo: str = None) -> List[Dict]:
+        """
+        分析作者常見的問題模式（從審查內容中提取）
+
+        Args:
+            author: 作者名稱
+            repo: 可選的倉庫過濾
+
+        Returns:
+            常見問題列表
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 獲取作者的所有 PR 審查內容
+                query = """
+                    SELECT review_content, score, pr_title, repo, created_at
+                    FROM review_tasks
+                    WHERE pr_author = ? AND status = 'completed' AND review_content IS NOT NULL
+                """
+                params = [author]
+
+                if repo:
+                    query += " AND repo = ?"
+                    params.append(repo)
+
+                query += " ORDER BY created_at DESC LIMIT 10"
+
+                cursor.execute(query, params)
+                reviews = cursor.fetchall()
+
+                # 從審查內容中提取常見問題關鍵詞
+                issue_patterns = {
+                    '程式碼品質': ['代碼質量', '代码质量', '程式碼品質', 'code quality'],
+                    '命名規範': ['命名', 'naming', '變數名', '变量名'],
+                    '錯誤處理': ['錯誤處理', '错误处理', 'error handling', '例外處理'],
+                    '效能問題': ['效能', '性能', 'performance', '優化', '优化'],
+                    '安全問題': ['安全', 'security', '漏洞', '风险'],
+                    '測試覆蓋': ['測試', '测试', 'test', 'coverage'],
+                    '註解不足': ['註解', '注释', 'comment', '文檔', '文档'],
+                    '重複程式碼': ['重複', '重复', 'duplicate', 'DRY']
+                }
+
+                issue_counts = {pattern: 0 for pattern in issue_patterns}
+
+                for review in reviews:
+                    content = review['review_content'] or ''
+                    for issue_type, keywords in issue_patterns.items():
+                        if any(keyword.lower() in content.lower() for keyword in keywords):
+                            issue_counts[issue_type] += 1
+
+                # 排序並過濾（只返回至少出現2次的問題）
+                common_issues = [
+                    {'issue_type': issue_type, 'occurrence_count': count}
+                    for issue_type, count in sorted(issue_counts.items(), key=lambda x: x[1], reverse=True)
+                    if count >= 2
+                ]
+
+                return common_issues
+
+        except Exception as e:
+            self.logger.error(f"分析作者常見問題失敗: {e}")
+            return []
+
+    def get_repository_best_practices(self, repo: str, limit: int = 10) -> List[str]:
+        """
+        從高分 PR 中提取專案的最佳實踐建議
+
+        Args:
+            repo: 倉庫名稱
+            limit: 分析的高分 PR 數量
+
+        Returns:
+            最佳實踐建議列表
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 獲取該倉庫評分最高的 PR 審查內容
+                cursor.execute("""
+                    SELECT review_content, score, pr_title
+                    FROM review_tasks
+                    WHERE repo = ? AND status = 'completed' AND score >= 85
+                    ORDER BY score DESC, created_at DESC
+                    LIMIT ?
+                """, (repo, limit))
+
+                high_score_reviews = cursor.fetchall()
+
+                if not high_score_reviews:
+                    return []
+
+                # 從高分審查中提取正面評價關鍵詞
+                positive_patterns = [
+                    '程式碼清晰', '代碼清晰', 'clean code', 'well structured',
+                    '良好的', '優秀的', '完整的測試', 'comprehensive test',
+                    '詳細的註解', 'well documented', '命名清晰', 'clear naming',
+                    '錯誤處理完善', 'proper error handling'
+                ]
+
+                practices = []
+                for review in high_score_reviews:
+                    content = review['review_content'] or ''
+                    for pattern in positive_patterns:
+                        if pattern.lower() in content.lower():
+                            practices.append(f"參考 PR '{review['pr_title'][:50]}' (評分: {review['score']})")
+                            break  # 每個 PR 只添加一次
+
+                return practices[:5]  # 返回前5個
+
+        except Exception as e:
+            self.logger.error(f"獲取專案最佳實踐失敗: {e}")
+            return []

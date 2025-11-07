@@ -399,7 +399,7 @@ class PRReviewer:
             return "⭐ 不建議合併 - 需要重大修改"
 
     def _build_review_prompt(self, context: Dict, diff: str, config: Dict) -> str:
-        """构建审查提示词"""
+        """构建审查提示词（包含作者歷史）"""
         focus_areas = config.get("focus_areas", [
             "代码质量",
             "潜在 bug",
@@ -409,6 +409,39 @@ class PRReviewer:
         ])
 
         language = config.get("language", "zh-TW")
+
+        # 獲取作者歷史統計
+        author = context.get('author', '')
+        author_history = self.db.get_author_pr_history(author, limit=10)
+        author_stats = author_history['stats']
+        common_issues = self.db.get_common_issues_by_author(author, repo=context.get('repo', ''))
+
+        # 構建作者歷史資訊區塊
+        author_history_text = ""
+        if author_stats['total_prs'] > 0:
+            trend_text = {
+                'improving': '📈 進步中（最近表現優於過去）',
+                'declining': '📉 需加強（最近表現不如過去）',
+                'stable': '➡️ 穩定'
+            }.get(author_stats['trend'], '')
+
+            author_history_text = f"""
+
+## 作者歷史表現
+
+**作者**: {author}
+- **過去 PR 總數**: {author_stats['total_prs']} 個（其中 {author_stats['scored_prs']} 個有評分）
+- **平均評分**: {author_stats['avg_score']}/100 (最低: {author_stats['min_score']}, 最高: {author_stats['max_score']})
+- **趨勢**: {trend_text}
+- **最近5次評分**: {', '.join(map(str, author_stats['recent_scores']))}
+
+"""
+            # 加入常見問題分析
+            if common_issues:
+                author_history_text += "**該作者過去常見問題**：\n"
+                for issue in common_issues:
+                    author_history_text += f"  - {issue['issue_type']} (出現 {issue['occurrence_count']} 次)\n"
+                author_history_text += "\n⚠️ **審查重點**：請特別注意上述該作者過去常犯的問題是否在此 PR 中再次出現。\n"
 
         # 檢查 PR 描述是否完整
         description = context.get('description', '').strip()
@@ -460,7 +493,7 @@ class PRReviewer:
 - **分支**: {context.get('head_branch', 'N/A')} → {context.get('base_branch', 'N/A')}
 - **檔案變更**: {context.get('files_changed', 0)} 個檔案
 - **程式碼變更**: +{context.get('additions', 0)} -{context.get('deletions', 0)} 行
-
+{author_history_text}
 ## PR 描述
 {context.get('description', '(無描述)')}
 {description_guide}

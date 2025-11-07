@@ -104,11 +104,45 @@ class IssueScorerService:
 
     def _perform_claude_scoring(self, repo_name: str, issue_number: int,
                                 content_type: str, title: str, body: str,
+                                author: str,
                                 comment_id: Optional[int] = None,
                                 issue_labels: list = None) -> Dict:
-        """使用 Claude CLI 執行 issue/comment 評分"""
+        """使用 Claude CLI 執行 issue/comment 評分（包含作者歷史）"""
         try:
-            self.logger.info(f"開始使用 Claude 評分 {repo_name}#{issue_number} ({content_type})")
+            self.logger.info(f"開始使用 Claude 評分 {repo_name}#{issue_number} ({content_type}) by {author}")
+
+            # 獲取作者歷史統計
+            author_history = self.db.get_author_issue_history(author, limit=10)
+            author_stats = author_history['stats']
+
+            # 構建作者歷史資訊區塊
+            author_history_text = ""
+            if author_stats['total_issues'] > 0:
+                trend_text = {
+                    'improving': '📈 進步中（最近表現優於過去）',
+                    'declining': '📉 需加強（最近表現不如過去）',
+                    'stable': '➡️ 穩定'
+                }.get(author_stats['trend'], '')
+
+                author_history_text = f"""
+
+## 📊 作者歷史表現
+
+**作者**: {author}
+- **過去 Issue/Comment 總數**: {author_stats['total_issues']} 個
+- **平均總分**: {author_stats['avg_overall']}/100
+- **各維度平均分**:
+  - 格式正確性: {author_stats['avg_format']}/100
+  - 內容完整性: {author_stats['avg_content']}/100
+  - 清晰度: {author_stats['avg_clarity']}/100
+  - 可操作性: {author_stats['avg_actionability']}/100
+- **分數範圍**: {author_stats['min_score']} - {author_stats['max_score']}
+- **趨勢**: {trend_text}
+- **最近5次評分**: {', '.join(map(str, author_stats['recent_scores']))}
+
+💡 **評分參考**：請參考該作者的歷史表現，給予公正且一致的評分標準。如果該作者表現持續進步，可以在評語中給予鼓勵；如果表現退步或維持低分，請在建議中提供明確的改進方向。
+
+"""
 
             # 構建評分提示
             if content_type == "issue":
@@ -133,6 +167,7 @@ class IssueScorerService:
                 prompt = f"""你是一個專業的 QA Issue 品質評估專家，負責評估 GitHub Issue 和評論的品質。請根據標準的 Bug Report Template 格式來評估以下內容。
 
 {content_description}
+{author_history_text}
 
 **標準 Issue Template 必填欄位**：
 1. **Links** - 來源連結（Parent/child issue, Reference）
@@ -211,6 +246,7 @@ class IssueScorerService:
                 prompt = f"""你是一個專業的項目管理和任務評估專家，負責評估 GitHub Task Issue 的品質。
 
 {content_description}
+{author_history_text}
 
 **Task Template 標準結構**：
 1. **Description** - 任務描述（清楚說明要做什麼）
@@ -250,6 +286,7 @@ class IssueScorerService:
                 prompt = f"""你是一個專業的產品需求分析專家，負責評估 GitHub Feature Request 的品質。
 
 {content_description}
+{author_history_text}
 
 **Request Template 標準結構**：
 1. **Problem Description** - 問題或需求描述
@@ -288,6 +325,7 @@ class IssueScorerService:
                 prompt = f"""你是一個專業的 QA 測試專家，負責評估測試結果報告的品質。
 
 {content_description}
+{author_history_text}
 
 **測試結果報告標準結構**：
 測試結果報告通常包含以下段落：
@@ -345,6 +383,7 @@ class IssueScorerService:
                 prompt = f"""你是一個專業的內容品質評估專家，負責評估 GitHub 內容的品質。
 
 {content_description}
+{author_history_text}
 
 請從以下四個維度進行評分（每個維度 0-100 分）：
 
@@ -652,7 +691,7 @@ class IssueScorerService:
 
             # 執行 Claude 評分
             score_result = self._perform_claude_scoring(
-                repo_name, issue_number, content_type, title, body, comment_id
+                repo_name, issue_number, content_type, title, body, author, comment_id
             )
 
             if score_result['success']:
