@@ -146,8 +146,8 @@ def get_all_scores(gateway) -> tuple:
                 issue_data = issue_response.json()
                 for record in issue_data.get('scores', []):
                     created_at = record.get('created_at', '')
-                    # 過濾：只保留 2025-11-07 之後的記錄，且未被忽略的
-                    if created_at >= cutoff_date and not record.get('ignored'):
+                    # 過濾：只保留 2025-11-07 之後的記錄（包含被忽略的記錄）
+                    if created_at >= cutoff_date:
                         all_scores.append({
                             'type': 'issue',
                             'score': record.get('overall_score'),
@@ -157,7 +157,8 @@ def get_all_scores(gateway) -> tuple:
                             'url': record.get('issue_url'),
                             'title': record.get('title'),
                             'created_at': created_at,
-                            'content_type': record.get('content_type')  # 'issue' or 'comment'
+                            'content_type': record.get('content_type'),  # 'issue' or 'comment'
+                            'ignored': record.get('ignored', False)  # 加入忽略狀態
                         })
         except Exception as e:
             gateway.logger.error(f"獲取 Issue 評分失敗: {e}")

@@ -2211,12 +2211,17 @@ def all_scores_template() -> str:
                     const typeText = score.type === 'issue' ?
                                    (score.content_type === 'comment' ? 'Comment' : 'Issue') : 'PR';
 
+                    // 如果被忽略，添加灰色半透明覆蓋
+                    const ignoredStyle = score.ignored ? 'opacity: 0.5; background-color: #f0f0f0;' : '';
+                    const ignoredBadge = score.ignored ? '<span class="type-badge" style="background-color: #6c757d; color: white; margin-left: 10px;">已忽略</span>' : '';
+
                     return `
-                        <div class="score-item">
+                        <div class="score-item" style="${ignoredStyle}">
                             <div class="score-info">
                                 <h3>
                                     <a href="${score.url}" target="_blank">${score.title || 'N/A'}</a>
                                     <span class="type-badge ${typeClass}">${typeText}</span>
+                                    ${ignoredBadge}
                                 </h3>
                                 <p>
                                     <strong>作者:</strong> ${score.author} |
