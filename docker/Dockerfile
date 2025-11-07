@@ -60,6 +60,8 @@ COPY src/pr_monitor.py .
 COPY src/pr_reviewer.py .
 COPY src/database.py .
 COPY src/gateway.py .
+COPY src/gateway_templates.py .
+COPY src/gateway_routes.py .
 COPY config.yaml .
 
 # 複製 msmtp 配置示例（可選）
