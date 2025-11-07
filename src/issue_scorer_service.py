@@ -647,7 +647,9 @@ class IssueScorerService:
                     if has_structured_content:
                         self.logger.info(f"評論作者是機器人 ({author})，但包含結構化修復報告，仍進行評分")
                     else:
-                        self.logger.info(f"跳過評分：評論作者是機器人本身 ({author})")
+                        # 記錄缺少哪些標記以便除錯
+                        missing_markers = [marker for marker in structured_markers if marker not in body]
+                        self.logger.info(f"跳過評分：評論作者是機器人本身 ({author})，缺少標記: {missing_markers}")
                         return {
                             'status': 'skipped',
                             'message': '跳過機器人自己的評論'

@@ -161,10 +161,10 @@ issue_scoring:
     - opened        # Issue 被創建時評分（只評分新建立的 Issue）
     # - edited      # 已停用：不評分編輯後的 Issue
 
-  # 觸發評分的 comment 動作（只評分測試結果類的評論）
+  # 觸發評分的 comment 動作（評分測試結果和結構化修復報告）
   comment_triggers:
-    - created       # 評論被創建時檢查是否為測試結果
-    # - edited      # 已停用：不評分編輯後的評論
+    - created       # 評論被創建時進行評分
+    - edited        # 評論被編輯後重新評分（僅限結構化修復報告）
 
   # 評分維度
   scoring_criteria:
