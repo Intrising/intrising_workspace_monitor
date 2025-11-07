@@ -604,6 +604,14 @@ class IssueScorerService:
                     'message': f'只評分新建立的 Issue (opened)，當前 action: {action}'
                 }
 
+            # 🔒 檢查 Issue body 是否包含跳過評分的標記
+            if body and '<!--skip for ai audit-->' in body:
+                self.logger.info(f"跳過評分：Issue 包含 skip for ai audit 標記 (repo={repo_name}, issue={issue_number})")
+                return {
+                    'status': 'skipped',
+                    'message': 'Issue 包含 skip for ai audit 標記'
+                }
+
         else:  # issue_comment
             content_type = "comment"
             comment_data = event_data.get('comment', {})
@@ -620,6 +628,14 @@ class IssueScorerService:
 
             issue_url = comment_data.get('html_url', '')
             comment_id = comment_data.get('id')
+
+            # 🔒 檢查是否包含跳過評分的標記
+            if body and '<!--skip for ai audit-->' in body:
+                self.logger.info(f"跳過評分：評論包含 skip for ai audit 標記 (repo={repo_name}, issue={issue_number}, comment={comment_id})")
+                return {
+                    'status': 'skipped',
+                    'message': '評論包含 skip for ai audit 標記'
+                }
 
             # 🔒 防止無限循環：跳過機器人自己的評論
             # 檢查評論是否包含自動評分標記
