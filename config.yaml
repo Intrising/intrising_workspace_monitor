@@ -164,7 +164,7 @@ issue_scoring:
   # 觸發評分的 comment 動作（評分測試結果和結構化修復報告）
   comment_triggers:
     - created       # 評論被創建時進行評分
-    # - edited      # 已停用：評論編輯後不重新評分
+    - edited        # 評論被編輯後重新評分
 
   # 評分維度
   scoring_criteria:
