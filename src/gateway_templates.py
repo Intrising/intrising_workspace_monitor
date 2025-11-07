@@ -1836,6 +1836,31 @@ def all_scores_template() -> str:
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 color: white;
             }
+            .stat-box {
+                cursor: pointer;
+                transition: transform 0.3s, box-shadow 0.3s, border 0.3s, background 0.3s;
+                border: 5px solid transparent;
+                position: relative;
+            }
+            .stat-box:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+            }
+            .stat-box.selected {
+                border: 5px solid #ff9800;
+                box-shadow: 0 0 30px 5px rgba(255, 152, 0, 0.8), 0 0 60px 10px rgba(255, 152, 0, 0.4);
+                transform: scale(1.1);
+                background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%) !important;
+                animation: pulse 2s infinite;
+            }
+            @keyframes pulse {
+                0%, 100% {
+                    box-shadow: 0 0 30px 5px rgba(255, 152, 0, 0.8), 0 0 60px 10px rgba(255, 152, 0, 0.4);
+                }
+                50% {
+                    box-shadow: 0 0 40px 8px rgba(255, 152, 0, 1), 0 0 80px 15px rgba(255, 152, 0, 0.6);
+                }
+            }
         </style>
     </head>
     <body>
@@ -1882,6 +1907,7 @@ def all_scores_template() -> str:
         <script>
             let allScores = [];
             let currentFilter = 'all';
+            let currentAuthor = null; // 當前選中的作者
 
             async function loadScores() {
                 try {
@@ -1953,7 +1979,7 @@ def all_scores_template() -> str:
                     let authorStatsHtml = '';
                     authorStats.forEach(stat => {
                         authorStatsHtml += `
-                            <div class="stat-box">
+                            <div class="stat-box" data-author="${stat.author}" onclick="filterByAuthor('${stat.author}')">
                                 <h3>${stat.avg}</h3>
                                 <p>${stat.author} (${stat.count})</p>
                             </div>
@@ -1971,9 +1997,14 @@ def all_scores_template() -> str:
             }
 
             function renderScores() {
-                const filteredScores = currentFilter === 'all'
+                let filteredScores = currentFilter === 'all'
                     ? allScores
                     : allScores.filter(s => s.type === currentFilter);
+
+                // 如果有選中的作者,進一步過濾
+                if (currentAuthor) {
+                    filteredScores = filteredScores.filter(s => s.author === currentAuthor);
+                }
 
                 if (filteredScores.length === 0) {
                     document.getElementById('scores').innerHTML = '<p style="text-align: center; color: #666;">暫無評分記錄</p>';
@@ -2014,6 +2045,31 @@ def all_scores_template() -> str:
                 }).join('');
 
                 document.getElementById('scores').innerHTML = scoresHtml;
+            }
+
+            // 按作者過濾
+            function filterByAuthor(author) {
+                // 如果點擊同一個作者,取消選擇
+                if (currentAuthor === author) {
+                    currentAuthor = null;
+                    // 移除所有 selected class
+                    document.querySelectorAll('.stat-box.selected').forEach(box => {
+                        box.classList.remove('selected');
+                    });
+                } else {
+                    currentAuthor = author;
+                    // 移除所有 selected class
+                    document.querySelectorAll('.stat-box.selected').forEach(box => {
+                        box.classList.remove('selected');
+                    });
+                    // 添加 selected class 到點擊的卡片
+                    document.querySelectorAll('.stat-box').forEach(box => {
+                        if (box.dataset.author === author) {
+                            box.classList.add('selected');
+                        }
+                    });
+                }
+                renderScores();
             }
 
             // 過濾器事件
