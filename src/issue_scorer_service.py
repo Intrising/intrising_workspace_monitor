@@ -631,14 +631,27 @@ class IssueScorerService:
                 }
 
             # 也檢查作者是否為機器人（雙重保護）
+            # 但如果評論包含結構化的修復報告內容，則仍然進行評分
             try:
                 bot_user = self.github.get_user().login
                 if author == bot_user:
-                    self.logger.info(f"跳過評分：評論作者是機器人本身 ({author})")
-                    return {
-                        'status': 'skipped',
-                        'message': '跳過機器人自己的評論'
-                    }
+                    # 檢查是否包含結構化的修復報告標記
+                    structured_markers = [
+                        '### Fixed in Version',
+                        '### Root Cause',
+                        '### Solution',
+                        '### Post-Fix Side Effects Analysis'
+                    ]
+                    has_structured_content = all(marker in body for marker in structured_markers)
+
+                    if has_structured_content:
+                        self.logger.info(f"評論作者是機器人 ({author})，但包含結構化修復報告，仍進行評分")
+                    else:
+                        self.logger.info(f"跳過評分：評論作者是機器人本身 ({author})")
+                        return {
+                            'status': 'skipped',
+                            'message': '跳過機器人自己的評論'
+                        }
             except Exception as e:
                 self.logger.warning(f"無法獲取機器人用戶名: {e}")
 
