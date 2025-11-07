@@ -214,6 +214,7 @@ class TaskDatabase:
                         overall_score INTEGER,
                         suggestions TEXT,
                         user_feedback TEXT,
+                        ignored BOOLEAN DEFAULT 0,
                         status TEXT NOT NULL,
                         error_message TEXT,
                         created_at TEXT NOT NULL,
@@ -246,6 +247,14 @@ class TaskDatabase:
                 try:
                     cursor.execute("ALTER TABLE issue_scores ADD COLUMN user_feedback TEXT")
                     self.logger.info("已為 issue_scores 表添加 user_feedback 欄位")
+                except Exception:
+                    # 欄位可能已存在，忽略錯誤
+                    pass
+
+                # 為現有表添加 ignored 欄位（如果不存在）
+                try:
+                    cursor.execute("ALTER TABLE issue_scores ADD COLUMN ignored BOOLEAN DEFAULT 0")
+                    self.logger.info("已為 issue_scores 表添加 ignored 欄位")
                 except Exception:
                     # 欄位可能已存在，忽略錯誤
                     pass
@@ -1362,18 +1371,18 @@ class TaskDatabase:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
 
-                where_clause = ""
+                where_clause = "WHERE (ignored IS NULL OR ignored = 0)"
                 params = []
 
                 if repo_name:
-                    where_clause = "WHERE repo_name = ?"
+                    where_clause += " AND repo_name = ?"
                     params.append(repo_name)
 
-                # 總評分數
+                # 總評分數（排除已忽略的）
                 cursor.execute(f"SELECT COUNT(*) FROM issue_scores {where_clause}", params)
                 total = cursor.fetchone()[0]
 
-                # 按狀態統計
+                # 按狀態統計（排除已忽略的）
                 cursor.execute(f"""
                     SELECT status, COUNT(*) as count
                     FROM issue_scores
@@ -1382,7 +1391,7 @@ class TaskDatabase:
                 """, params)
                 by_status = {row[0]: row[1] for row in cursor.fetchall()}
 
-                # 按內容類型統計
+                # 按內容類型統計（排除已忽略的）
                 cursor.execute(f"""
                     SELECT content_type, COUNT(*) as count
                     FROM issue_scores
@@ -1391,12 +1400,11 @@ class TaskDatabase:
                 """, params)
                 by_type = {row[0]: row[1] for row in cursor.fetchall()}
 
-                # 平均分數（只計算已完成的）
+                # 平均分數（只計算已完成的且未忽略的）
                 cursor.execute(f"""
                     SELECT AVG(overall_score) as avg_score
                     FROM issue_scores
-                    {where_clause}
-                    {"AND" if where_clause else "WHERE"} status = 'completed' AND overall_score IS NOT NULL
+                    {where_clause} AND status = 'completed' AND overall_score IS NOT NULL
                 """, params)
                 result = cursor.fetchone()
                 avg_score = round(result[0], 1) if result[0] is not None else None

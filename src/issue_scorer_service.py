@@ -773,7 +773,7 @@ def get_score(score_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/scores/<score_id>/feedback', methods=['POST'])
+@app.route('/api/scores/<path:score_id>/feedback', methods=['POST'])
 def update_feedback(score_id):
     """更新評分記錄的使用者反饋"""
     try:
@@ -798,6 +798,35 @@ def update_feedback(score_id):
 
     except Exception as e:
         service.logger.error(f"更新反饋失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scores/<path:score_id>/ignore', methods=['POST'])
+def toggle_ignore(score_id):
+    """切換評分記錄的忽略狀態"""
+    try:
+        data = request.json
+        ignored = data.get('ignored', False)
+
+        # 更新資料庫
+        success = service.db.update_score_record(score_id, {
+            'ignored': 1 if ignored else 0
+        })
+
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': '已更新忽略狀態',
+                'ignored': ignored
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '找不到評分記錄'
+            }), 404
+
+    except Exception as e:
+        service.logger.error(f"更新忽略狀態失敗: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

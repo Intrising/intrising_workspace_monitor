@@ -319,8 +319,6 @@ def index_template() -> str:
             // 頁面載入時執行
             loadData();
 
-            // 自動刷新（每 5 秒）
-            setInterval(loadData, 5000);
         </script>
     </body>
     </html>
@@ -563,8 +561,6 @@ def pr_tasks_template() -> str:
             // 初始載入
             loadTasks();
 
-            // 每30秒自動刷新
-            setInterval(loadTasks, 30000);
         </script>
     </body>
     </html>
@@ -790,8 +786,6 @@ def issue_copies_template() -> str:
             // 初始載入
             loadRecords();
 
-            // 每30秒自動刷新
-            setInterval(loadRecords, 30000);
         </script>
     </body>
     </html>
@@ -1045,8 +1039,6 @@ def comment_syncs_template() -> str:
             // 初始載入
             loadRecords();
 
-            // 每30秒自動刷新
-            setInterval(loadRecords, 30000);
         </script>
     </body>
     </html>
@@ -1308,8 +1300,6 @@ def history_template() -> str:
             // 初始載入
             loadHistory();
 
-            // 每30秒自動刷新
-            setInterval(loadHistory, 30000);
         </script>
     </body>
     </html>
@@ -1607,10 +1597,15 @@ def issue_scores_template() -> str:
                                                 🗣️ 你的意見（用於訓練改進）:
                                             </label>
                                             <textarea id="feedback-${detailsId}" style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px; resize: vertical;" placeholder="例如：這個評分太高/太低，因為...">${escapeHtml(score.user_feedback || '')}</textarea>
-                                            <button onclick="saveFeedback('${score.score_id}', '${detailsId}')" style="margin-top: 10px; padding: 8px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
-                                                💾 儲存意見
-                                            </button>
-                                            <span id="feedback-msg-${detailsId}" style="margin-left: 10px; color: #28a745;"></span>
+                                            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                                                <button onclick="saveFeedback('${score.score_id}', '${detailsId}')" style="padding: 8px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
+                                                    💾 儲存意見
+                                                </button>
+                                                <button onclick="toggleIgnore('${score.score_id}', ${score.ignored || false})" id="ignore-btn-${detailsId}" style="padding: 8px 20px; background: ${score.ignored ? '#6c757d' : '#dc3545'}; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">
+                                                    ${score.ignored ? '✓ 已忽略' : '🚫 標記忽略'}
+                                                </button>
+                                            </div>
+                                            <span id="feedback-msg-${detailsId}" style="margin-top: 10px; display: inline-block; color: #28a745;"></span>
                                         </div>
                                     </div>
                                 ` : ''}
@@ -1643,7 +1638,9 @@ def issue_scores_template() -> str:
                 const feedback = feedbackTextarea.value.trim();
 
                 try {
-                    const response = await fetch(`/api/issue-scorer/scores/${scoreId}/feedback`, {
+                    // URL encode the scoreId to handle special characters like # and /
+                    const encodedScoreId = encodeURIComponent(scoreId);
+                    const response = await fetch(`/api/issue-scorer/scores/${encodedScoreId}/feedback`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -1665,11 +1662,32 @@ def issue_scores_template() -> str:
                 }
             }
 
+            async function toggleIgnore(scoreId, currentIgnored) {
+                try {
+                    const encodedScoreId = encodeURIComponent(scoreId);
+                    const response = await fetch(`/api/issue-scorer/scores/${encodedScoreId}/ignore`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ ignored: !currentIgnored })
+                    });
+
+                    if (response.ok) {
+                        // 重新加載數據以更新 UI
+                        loadScores();
+                    } else {
+                        alert('操作失敗，請重試');
+                    }
+                } catch (error) {
+                    console.error('切換忽略狀態失敗:', error);
+                    alert('操作失敗，請重試');
+                }
+            }
+
             // 頁面載入時執行
             loadScores();
 
-            // 自動刷新（每 30 秒）
-            setInterval(loadScores, 30000);
         </script>
     </body>
     </html>
@@ -2011,8 +2029,6 @@ def all_scores_template() -> str:
             // 初始載入
             loadScores();
 
-            // 每30秒自動刷新
-            setInterval(loadScores, 30000);
         </script>
     </body>
     </html>

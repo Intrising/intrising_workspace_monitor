@@ -8,6 +8,7 @@ from datetime import datetime
 from flask import request, jsonify
 import requests
 from typing import Dict
+from urllib.parse import quote
 
 from gateway_templates import (
     index_template,
@@ -93,8 +94,10 @@ def update_score_feedback(gateway, score_id: str) -> tuple:
     """更新評分記錄的使用者反饋"""
     try:
         data = request.json
+        # URL encode the score_id for forwarding to issue-scorer
+        encoded_score_id = quote(score_id, safe='')
         response = requests.post(
-            f"{gateway.issue_scorer_url}/api/scores/{score_id}/feedback",
+            f"{gateway.issue_scorer_url}/api/scores/{encoded_score_id}/feedback",
             json=data,
             timeout=10
         )
@@ -104,6 +107,26 @@ def update_score_feedback(gateway, score_id: str) -> tuple:
             return jsonify({"error": "Failed to update feedback"}), response.status_code
     except Exception as e:
         gateway.logger.error(f"更新反饋失敗: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def toggle_score_ignore(gateway, score_id: str) -> tuple:
+    """切換評分記錄的忽略狀態"""
+    try:
+        data = request.json
+        # URL encode the score_id for forwarding to issue-scorer
+        encoded_score_id = quote(score_id, safe='')
+        response = requests.post(
+            f"{gateway.issue_scorer_url}/api/scores/{encoded_score_id}/ignore",
+            json=data,
+            timeout=10
+        )
+        if response.status_code == 200:
+            return jsonify(response.json()), 200
+        else:
+            return jsonify({"error": "Failed to toggle ignore status"}), response.status_code
+    except Exception as e:
+        gateway.logger.error(f"切換忽略狀態失敗: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -123,8 +146,8 @@ def get_all_scores(gateway) -> tuple:
                 issue_data = issue_response.json()
                 for record in issue_data.get('scores', []):
                     created_at = record.get('created_at', '')
-                    # 過濾：只保留 2025-11-07 之後的記錄
-                    if created_at >= cutoff_date:
+                    # 過濾：只保留 2025-11-07 之後的記錄，且未被忽略的
+                    if created_at >= cutoff_date and not record.get('ignored'):
                         all_scores.append({
                             'type': 'issue',
                             'score': record.get('overall_score'),

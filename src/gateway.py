@@ -29,6 +29,7 @@ from gateway_routes import (
     handle_webhook,
     proxy_issue_scorer_scores,
     update_score_feedback,
+    toggle_score_ignore,
     get_all_scores,
     index,
     pr_tasks_page,
@@ -357,11 +358,18 @@ def api_issue_scorer_scores():
     return proxy_issue_scorer_scores(gateway)
 
 
-@app.route('/api/issue-scorer/scores/<score_id>/feedback', methods=['POST'])
+@app.route('/api/issue-scorer/scores/<path:score_id>/feedback', methods=['POST'])
 @auth.login_required
 def api_update_score_feedback(score_id):
     """更新評分記錄的使用者反饋"""
     return update_score_feedback(gateway, score_id)
+
+
+@app.route('/api/issue-scorer/scores/<path:score_id>/ignore', methods=['POST'])
+@auth.login_required
+def api_toggle_score_ignore(score_id):
+    """切換評分記錄的忽略狀態"""
+    return toggle_score_ignore(gateway, score_id)
 
 
 @app.route('/api/all-scores', methods=['GET'])
