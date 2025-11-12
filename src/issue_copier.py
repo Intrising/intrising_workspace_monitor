@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from github import Github, GithubException
 from dotenv import load_dotenv
+from github_asset_uploader import GitHubAssetUploader
 
 
 class IssueCopier:
@@ -33,6 +34,10 @@ class IssueCopier:
         self.logger = logger
         self.db = database
 
+        # 初始化圖片上傳器
+        github_token = os.getenv("GITHUB_TOKEN")
+        self.asset_uploader = GitHubAssetUploader(github_token, logger)
+
         # 來源 repository
         self.source_repo = config.get("source_repo", "")
 
@@ -51,93 +56,7 @@ class IssueCopier:
         self.logger.info("Issue Copier 初始化完成")
         self.logger.info(f"來源 repository: {self.source_repo}")
         self.logger.info(f"Label 映射規則: {self.label_to_repo}")
-
-    def download_image(self, url: str) -> Optional[Tuple[bytes, str]]:
-        """下載圖片
-
-        Args:
-            url: 圖片 URL
-
-        Returns:
-            (圖片內容, 文件名) 或 None（如果下載失敗）
-        """
-        try:
-            self.logger.info(f"下載圖片: {url}")
-
-            # 發送 GET 請求下載圖片
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-
-            # 從 URL 中提取文件名
-            filename = url.split("/")[-1].split("?")[0]  # 移除查詢參數
-            if not filename:
-                filename = "image.png"
-
-            self.logger.info(f"成功下載圖片: {filename} ({len(response.content)} bytes)")
-            return response.content, filename
-
-        except Exception as e:
-            self.logger.error(f"下載圖片失敗 ({url}): {e}")
-            return None
-
-    def upload_image_to_repo(self, repo_full_name: str, image_data: bytes, filename: str) -> Optional[str]:
-        """上傳圖片到指定 repository（透過 GitHub Issue 附件 API）
-
-        Args:
-            repo_full_name: 目標 repository 全名（例如 "owner/repo"）
-            image_data: 圖片二進制數據
-            filename: 文件名
-
-        Returns:
-            上傳後的圖片 URL，失敗返回 None
-        """
-        try:
-            repo = self.github.get_repo(repo_full_name)
-
-            # GitHub 不直接提供圖片上傳 API
-            # 我們需要透過創建一個臨時 issue comment 來上傳圖片
-            # 但這需要先有一個 issue，所以我們改用另一種方法
-
-            # 方法：使用 GitHub Asset Upload API（透過 PyGithub 的內部方法）
-            # 注意：這是一個 workaround，因為 PyGithub 沒有直接的圖片上傳 API
-
-            # 更好的方法：使用 GitHub's Asset Uploads for Releases
-            # 但對於 issue 圖片，最簡單的方法是使用 git repo 存儲
-
-            # 先嘗試使用 repo 的 create_file 上傳到 assets 目錄
-            asset_path = f"assets/issue_images/{filename}"
-
-            try:
-                # 檢查文件是否已存在
-                contents = repo.get_contents(asset_path)
-                # 如果存在，更新文件
-                result = repo.update_file(
-                    path=asset_path,
-                    message=f"Upload issue image: {filename}",
-                    content=image_data,
-                    sha=contents.sha,
-                    branch="main"
-                )
-            except GithubException as e:
-                if e.status == 404:
-                    # 文件不存在，創建新文件
-                    result = repo.create_file(
-                        path=asset_path,
-                        message=f"Upload issue image: {filename}",
-                        content=image_data,
-                        branch="main"
-                    )
-                else:
-                    raise
-
-            # 獲取文件的 raw URL
-            raw_url = result['content'].download_url
-            self.logger.info(f"成功上傳圖片到 {repo_full_name}: {raw_url}")
-            return raw_url
-
-        except Exception as e:
-            self.logger.error(f"上傳圖片到 {repo_full_name} 失敗: {e}")
-            return None
+        self.logger.info(f"圖片上傳功能: {'啟用 (上傳到 assets 分支)' if self.reupload_images else '停用'}")
 
     def process_issue_references(self, body: str, source_repo: str) -> str:
         """處理 issue body 中的 issue 引用，將 #數字 轉換為完整的 repo#數字 格式
@@ -175,22 +94,33 @@ class IssueCopier:
 
         return processed_body
 
-    def process_images_in_body(self, body: str, source_repo: str, target_repo: str) -> str:
-        """處理 issue body 中的圖片（保留原始 URL）
+    def process_images_in_body(self, body: str, source_repo: str, target_repo: str, issue_number: int = None) -> str:
+        """處理 issue body 中的圖片（自動重新上傳到目標 repo 的 assets 分支）
 
         Args:
             body: 原始 issue body 文本
             source_repo: 來源 repository
             target_repo: 目標 repository
+            issue_number: Issue 編號
 
         Returns:
-            處理後的 body 文本（保留原始圖片 URL）
+            處理後的 body 文本（圖片 URL 已更新為 GitHub assets URL）
         """
-        if not body:
+        if not body or not self.reupload_images:
             return body
 
-        # 保留原始圖片 URL，不做任何處理
-        return body
+        # 使用 GitHubAssetUploader 自動處理所有圖片
+        try:
+            processed_body = self.asset_uploader.process_text_images(
+                repo_full_name=target_repo,
+                text=body,
+                issue_number=issue_number
+            )
+            return processed_body
+        except Exception as e:
+            self.logger.error(f"處理圖片時發生錯誤: {e}")
+            # 發生錯誤時返回原始 body
+            return body
 
     def get_target_repos_by_labels(self, labels: List[str]) -> List[str]:
         """根據 labels 獲取目標 repositories
@@ -358,7 +288,7 @@ class IssueCopier:
 
             # 處理圖片（下載並重新上傳）
             processed_body, images_count = self._process_images_in_body_with_count(
-                source_body, source_repo, target_repo_name
+                source_body, source_repo, target_repo_name, source_number
             )
 
             # 處理 issue 引用 (#數字 -> repo#數字)
@@ -456,13 +386,19 @@ class IssueCopier:
 
             return None
 
-    def _process_images_in_body_with_count(self, body: str, source_repo: str, target_repo: str) -> tuple:
+    def _process_images_in_body_with_count(self, body: str, source_repo: str, target_repo: str, issue_number: int = None) -> tuple:
         """處理 issue body 中的圖片並返回圖片數量
+
+        Args:
+            body: Issue body
+            source_repo: 來源 repository
+            target_repo: 目標 repository
+            issue_number: Issue 編號
 
         Returns:
             (處理後的 body, 圖片數量)
         """
-        processed_body = self.process_images_in_body(body, source_repo, target_repo)
+        processed_body = self.process_images_in_body(body, source_repo, target_repo, issue_number)
 
         # 計算原始 body 中的圖片數量
         if not body:

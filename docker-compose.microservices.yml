@@ -124,6 +124,7 @@ services:
     volumes:
       - ./src/issue_copier_service.py:/app/issue_copier_service.py:ro
       - ./src/issue_copier.py:/app/issue_copier.py:ro
+      - ./src/github_asset_uploader.py:/app/github_asset_uploader.py:ro
       - ./src/database.py:/app/database.py:ro
       - ./config.yaml:/app/config.yaml:ro
       - issue-copier-logs:/var/log/github-monitor

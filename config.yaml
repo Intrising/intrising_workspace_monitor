@@ -135,7 +135,8 @@ issue_copy:
   copy_labels: true
 
   # 是否下載並重新上傳圖片（設為 false 將保留原始圖片 URL）
-  reupload_images: false
+    # 是否重新上傳圖片到 GitHub assets 分支（自動化圖片管理）
+  reupload_images: true
 
   # 是否在原 issue 添加評論（說明已複製到哪裡）
   add_copy_comment: false
