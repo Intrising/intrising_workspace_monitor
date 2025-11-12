@@ -24,6 +24,9 @@ services:
 
     volumes:
       - ./src/gateway.py:/app/gateway.py:ro
+      - ./src/gateway_templates.py:/app/gateway_templates.py:ro
+      - ./src/gateway_routes.py:/app/gateway_routes.py:ro
+      - ./src/database.py:/app/database.py:ro
       - ./config.yaml:/app/config.yaml:ro
       - workspace-monitor-logs:/var/log/github-monitor
       - pr-reviewer-db:/var/lib/github-monitor
@@ -164,7 +167,9 @@ services:
 
     volumes:
       - ./src/issue_scorer_service.py:/app/issue_scorer_service.py:ro
+      - ./src/feedback_analyzer.py:/app/feedback_analyzer.py:ro
       - ./src/database.py:/app/database.py:ro
+      - ./src/scorer_config.json:/app/scorer_config.json:rw
       - ./config.yaml:/app/config.yaml:ro
       - issue-scorer-logs:/var/log/github-monitor
       - pr-reviewer-db:/var/lib/github-monitor

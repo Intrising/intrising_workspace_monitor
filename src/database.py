@@ -259,6 +259,56 @@ class TaskDatabase:
                     # 欄位可能已存在，忽略錯誤
                     pass
 
+                # 創建反饋分析模式表 - 用於學習循環
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS feedback_patterns (
+                        pattern_id TEXT PRIMARY KEY,
+                        pattern_type TEXT NOT NULL,
+                        dimension TEXT,
+                        feedback_theme TEXT NOT NULL,
+                        occurrence_count INTEGER DEFAULT 1,
+                        avg_score_deviation REAL,
+                        example_feedbacks TEXT,
+                        identified_issue TEXT,
+                        suggested_adjustment TEXT,
+                        last_seen TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+
+                # 索引用於快速查詢反饋模式
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_feedback_pattern_type
+                    ON feedback_patterns(pattern_type, occurrence_count DESC)
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_feedback_dimension
+                    ON feedback_patterns(dimension, occurrence_count DESC)
+                """)
+
+                # 創建反饋分析快照表 - 存儲定期的聚合分析結果
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS feedback_snapshots (
+                        snapshot_id TEXT PRIMARY KEY,
+                        snapshot_date TEXT NOT NULL,
+                        total_feedbacks INTEGER,
+                        positive_count INTEGER,
+                        negative_count INTEGER,
+                        neutral_count INTEGER,
+                        top_issues TEXT,
+                        learning_insights TEXT,
+                        prompt_adjustments TEXT,
+                        created_at TEXT NOT NULL
+                    )
+                """)
+
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_snapshot_date
+                    ON feedback_snapshots(snapshot_date DESC)
+                """)
+
                 conn.commit()
                 self.logger.info(f"資料庫初始化完成: {self.db_path}")
 
@@ -1347,6 +1397,33 @@ class TaskDatabase:
             self.logger.error(f"獲取評分記錄失敗: {e}")
             return None
 
+    def get_score_by_comment_id(self, repo_name: str, issue_number: int, comment_id: int) -> List[Dict]:
+        """
+        根據 comment_id 查找評分記錄
+
+        Args:
+            repo_name: Repository 名稱
+            issue_number: Issue 編號
+            comment_id: Comment ID
+
+        Returns:
+            評分記錄列表
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM issue_scores
+                    WHERE repo_name = ? AND issue_number = ? AND comment_id = ?
+                    ORDER BY created_at DESC
+                """, (repo_name, issue_number, comment_id))
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            self.logger.error(f"根據 comment_id 查找評分記錄失敗: {e}")
+            return []
+
     def get_all_score_records(self, limit: int = 100, status: str = None, repo_name: str = None) -> List[Dict]:
         """
         獲取所有評分記錄
@@ -1385,6 +1462,34 @@ class TaskDatabase:
         except Exception as e:
             self.logger.error(f"獲取評分記錄失敗: {e}")
             return []
+
+    def check_comment_already_scored(self, repo_name: str, issue_number: int, comment_id: int) -> bool:
+        """
+        檢查特定 comment 是否已經被評分過
+
+        Args:
+            repo_name: Repository 名稱
+            issue_number: Issue 編號
+            comment_id: Comment ID
+
+        Returns:
+            True 如果已經評分過, False 如果還沒有
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT COUNT(*) as count
+                    FROM issue_scores
+                    WHERE repo_name = ? AND issue_number = ? AND comment_id = ?
+                """, (repo_name, issue_number, comment_id))
+
+                result = cursor.fetchone()
+                return result['count'] > 0
+
+        except Exception as e:
+            self.logger.error(f"檢查 comment 評分狀態失敗: {e}")
+            return False
 
     def get_score_stats(self, repo_name: str = None) -> Dict:
         """

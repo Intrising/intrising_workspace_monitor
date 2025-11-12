@@ -401,7 +401,11 @@ class IssueCopier:
 
             # 新增評論請更新圖片/附件
             try:
-                new_issue.create_comment("@IS-LilithChang 更新一下圖片/附件")
+                # 🔒 只有從 test-Lantech 複製過來的才加上跳過評分標記
+                update_comment = "@IS-LilithChang 更新一下圖片/附件"
+                if source_repo == "Intrising/test-Lantech":
+                    update_comment = "<!--skip for ai audit-->\n\n" + update_comment
+                new_issue.create_comment(update_comment)
                 self.logger.info("已新增圖片/附件更新提醒評論")
             except Exception as e:
                 self.logger.error(f"新增評論失敗: {e}")

@@ -17,7 +17,8 @@ from gateway_templates import (
     comment_syncs_template,
     history_template,
     issue_scores_template,
-    all_scores_template
+    all_scores_template,
+    scorer_config_template
 )
 
 
@@ -258,3 +259,88 @@ def issue_scores_page() -> str:
 def all_scores_page() -> str:
     """統一評分統計頁面 - Issue 和 PR 評分"""
     return all_scores_template()
+
+
+def scorer_config_page() -> str:
+    """評分配置管理頁面"""
+    return scorer_config_template()
+
+
+def get_scorer_config(gateway) -> tuple:
+    """獲取評分配置"""
+    try:
+        response = requests.get(f"{gateway.issue_scorer_url}/api/config", timeout=10)
+        if response.status_code == 200:
+            return jsonify(response.json()), 200
+        else:
+            return jsonify({"error": "Failed to fetch config"}), response.status_code
+    except Exception as e:
+        gateway.logger.error(f"獲取評分配置失敗: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def update_scorer_config(gateway) -> tuple:
+    """更新評分配置"""
+    try:
+        data = request.json
+        response = requests.post(
+            f"{gateway.issue_scorer_url}/api/config",
+            json=data,
+            timeout=10
+        )
+        if response.status_code == 200:
+            return jsonify(response.json()), 200
+        else:
+            return jsonify({"error": "Failed to update config"}), response.status_code
+    except Exception as e:
+        gateway.logger.error(f"更新評分配置失敗: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def get_feedback_analytics(gateway) -> str:
+    """反饋分析頁面"""
+    try:
+        # 獲取統計數據
+        response = requests.get(
+            f"{gateway.issue_scorer_url}/api/feedback/statistics?days=30",
+            timeout=10
+        )
+        stats = response.json().get('data', {}) if response.status_code == 200 else {}
+
+        # 獲取見解
+        response = requests.get(
+            f"{gateway.issue_scorer_url}/api/feedback/insights?days=30",
+            timeout=10
+        )
+        insights = response.json().get('data', {}) if response.status_code == 200 else {}
+
+        # 獲取反饋列表
+        response = requests.get(
+            f"{gateway.issue_scorer_url}/api/feedback/list?days=30&limit=20",
+            timeout=10
+        )
+        feedbacks = response.json().get('data', []) if response.status_code == 200 else []
+
+        from gateway_templates import feedback_analytics_template
+        return feedback_analytics_template(stats, insights, feedbacks)
+
+    except Exception as e:
+        gateway.logger.error(f"獲取反饋分析失敗: {e}")
+        return f"<h1>Error</h1><p>{str(e)}</p>"
+
+
+def get_feedback_patterns_api(gateway) -> tuple:
+    """獲取反饋模式 API"""
+    try:
+        days = request.args.get('days', 30, type=int)
+        response = requests.get(
+            f"{gateway.issue_scorer_url}/api/feedback/patterns?days={days}",
+            timeout=10
+        )
+        if response.status_code == 200:
+            return jsonify(response.json()), 200
+        else:
+            return jsonify({"error": "Failed to fetch patterns"}), response.status_code
+    except Exception as e:
+        gateway.logger.error(f"獲取反饋模式失敗: {e}")
+        return jsonify({"error": str(e)}), 500

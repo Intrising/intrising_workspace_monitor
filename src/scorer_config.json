@@ -1,0 +1,5 @@
+{
+    "whitelist_authors": ["IS-Jason", "IS-Miranda", "IS-Yan"],
+    "max_comment_length": 100,
+    "prevent_duplicate_scoring": true
+}

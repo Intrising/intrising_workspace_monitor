@@ -38,7 +38,12 @@ from gateway_routes import (
     comment_syncs_page,
     history_page,
     issue_scores_page,
-    all_scores_page
+    all_scores_page,
+    scorer_config_page,
+    get_scorer_config,
+    update_scorer_config,
+    get_feedback_analytics,
+    get_feedback_patterns_api
 )
 
 
@@ -435,6 +440,41 @@ def page_issue_scores():
 def page_all_scores():
     """統一評分統計頁面 - Issue 和 PR 評分"""
     return all_scores_page()
+
+
+@app.route('/scorer-config')
+@auth.login_required
+def page_scorer_config():
+    """評分配置管理頁面"""
+    return scorer_config_page()
+
+
+@app.route('/api/scorer-config', methods=['GET'])
+@auth.login_required
+def api_get_scorer_config():
+    """獲取評分配置 API"""
+    return get_scorer_config(gateway)
+
+
+@app.route('/api/scorer-config', methods=['POST'])
+@auth.login_required
+def api_update_scorer_config():
+    """更新評分配置 API"""
+    return update_scorer_config(gateway)
+
+
+@app.route('/feedback-analytics')
+@auth.login_required
+def page_feedback_analytics():
+    """反饋學習分析頁面"""
+    return get_feedback_analytics(gateway)
+
+
+@app.route('/api/feedback/patterns', methods=['GET'])
+@auth.login_required
+def api_feedback_patterns():
+    """獲取反饋模式 API"""
+    return get_feedback_patterns_api(gateway)
 
 
 # ============================================================================

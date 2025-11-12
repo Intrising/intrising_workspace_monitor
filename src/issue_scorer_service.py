@@ -7,6 +7,8 @@ Issue Scorer 微服務
 import os
 import sys
 import logging
+import re
+import json
 from datetime import datetime
 from typing import Dict, Optional
 from flask import Flask, request, jsonify
@@ -20,6 +22,7 @@ import threading
 
 # 導入共享模組
 from database import TaskDatabase
+from feedback_analyzer import FeedbackAnalyzer
 
 
 class IssueScorerService:
@@ -49,6 +52,14 @@ class IssueScorerService:
         # 評分配置
         self.scoring_config = self.config.get('issue_scoring', {})
 
+        # 載入可編輯的評分配置
+        self.scorer_config_file = "/app/scorer_config.json"
+        self.scorer_config = self._load_scorer_config()
+
+        # 初始化反饋分析器
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        self.feedback_analyzer = FeedbackAnalyzer(self.db, anthropic_key)
+
         self.logger.info("Issue Scorer 服務初始化完成")
 
     def _load_config(self, config_path: str) -> dict:
@@ -73,6 +84,53 @@ class IssueScorerService:
         self.logger = logging.getLogger("IssueScorer")
         self.logger.setLevel(getattr(logging, log_level.upper()))
         self.logger.addHandler(handler)
+
+    def _load_scorer_config(self) -> dict:
+        """載入評分配置"""
+        default_config = {
+            "whitelist_authors": ["IS-Jason", "IS-Miranda", "IS-Yan"],
+            "max_comment_length": 100,
+            "prevent_duplicate_scoring": True
+        }
+        try:
+            if os.path.exists(self.scorer_config_file):
+                with open(self.scorer_config_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            else:
+                # 如果文件不存在，創建默認配置
+                self._save_scorer_config(default_config)
+                return default_config
+        except Exception as e:
+            self.logger.error(f"載入評分配置失敗: {e}")
+            return default_config
+
+    def _save_scorer_config(self, config: dict) -> bool:
+        """儲存評分配置"""
+        try:
+            with open(self.scorer_config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            self.logger.error(f"儲存評分配置失敗: {e}")
+            return False
+
+    def get_scorer_config(self) -> dict:
+        """獲取當前評分配置"""
+        return self.scorer_config.copy()
+
+    def update_scorer_config(self, new_config: dict) -> bool:
+        """更新評分配置"""
+        try:
+            # 合併新配置
+            self.scorer_config.update(new_config)
+            # 儲存到文件
+            if self._save_scorer_config(self.scorer_config):
+                self.logger.info("評分配置已更新")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"更新評分配置失敗: {e}")
+            return False
 
     def _detect_issue_type(self, title: str, body: str) -> str:
         """偵測 issue 類型"""
@@ -144,6 +202,44 @@ class IssueScorerService:
 
 """
 
+            # 獲取反饋學習見解
+            feedback_insights = self.feedback_analyzer.get_feedback_insights(days=30, min_occurrences=2)
+            feedback_text = ""
+
+            if feedback_insights.get('has_insights'):
+                feedback_text = f"""
+
+## 🎓 用戶反饋學習見解
+
+{feedback_insights['summary']}
+
+"""
+                # 添加通用指導
+                if feedback_insights.get('general_guidance'):
+                    feedback_text += "**最近用戶反饋的重點改進方向**:\n"
+                    for guidance in feedback_insights['general_guidance'][:3]:  # 最多顯示3條
+                        feedback_text += f"{guidance}\n"
+                    feedback_text += "\n"
+
+                # 添加維度特定調整
+                if feedback_insights.get('dimension_adjustments'):
+                    feedback_text += "**各維度評分調整建議**:\n"
+                    for dimension, adjustments in feedback_insights['dimension_adjustments'].items():
+                        if adjustments:
+                            adj = adjustments[0]  # 取最重要的一條
+                            feedback_text += f"- **{dimension}維度**: {adj.get('suggestion', '')} "
+                            if adj.get('avg_deviation'):
+                                deviation = adj['avg_deviation']
+                                if deviation > 0:
+                                    feedback_text += f"(用戶認為評分平均低了 {abs(deviation):.0f} 分)\n"
+                                else:
+                                    feedback_text += f"(用戶認為評分平均高了 {abs(deviation):.0f} 分)\n"
+                            else:
+                                feedback_text += "\n"
+                    feedback_text += "\n"
+
+                feedback_text += "💡 **請根據以上反饋調整評分策略**，確保評分更符合用戶期望和實際情況。\n\n"
+
             # 構建評分提示
             if content_type == "issue":
                 content_description = f"""
@@ -168,6 +264,7 @@ class IssueScorerService:
 
 {content_description}
 {author_history_text}
+{feedback_text}
 
 **標準 Issue Template 必填欄位**：
 1. **Links** - 來源連結（Parent/child issue, Reference）
@@ -247,6 +344,7 @@ class IssueScorerService:
 
 {content_description}
 {author_history_text}
+{feedback_text}
 
 **Task Template 標準結構**：
 1. **Description** - 任務描述（清楚說明要做什麼）
@@ -287,6 +385,7 @@ class IssueScorerService:
 
 {content_description}
 {author_history_text}
+{feedback_text}
 
 **Request Template 標準結構**：
 1. **Problem Description** - 問題或需求描述
@@ -326,6 +425,7 @@ class IssueScorerService:
 
 {content_description}
 {author_history_text}
+{feedback_text}
 
 **測試結果報告標準結構**：
 測試結果報告通常包含以下段落：
@@ -384,6 +484,7 @@ class IssueScorerService:
 
 {content_description}
 {author_history_text}
+{feedback_text}
 
 請從以下四個維度進行評分（每個維度 0-100 分）：
 
@@ -542,6 +643,92 @@ class IssueScorerService:
             self.logger.error(f"發布評分結果失敗: {e}", exc_info=True)
             raise
 
+    def _extract_feedback_from_reply(self, comment_body: str, repo_name: str, issue_number: int, author: str) -> bool:
+        """
+        檢測評論是否為對評分結果的回覆，並提取用戶反饋
+
+        Args:
+            comment_body: 評論內容
+            repo_name: Repository 名稱
+            issue_number: Issue 編號
+            author: 評論作者
+
+        Returns:
+            bool: 如果成功提取反饋返回 True，否則返回 False
+        """
+        try:
+            # 檢查評論是否包含引用的評分結果（Markdown quote block）
+            if not comment_body or '>' not in comment_body:
+                return False
+
+            # 檢查是否引用了評分標記
+            if '📊 評論品質評分' not in comment_body and '📊 Issue品質評分' not in comment_body:
+                return False
+
+            # 提取引用的評分來源連結 (格式: [#41 (comment)](https://github.com/.../issues/41#issuecomment-3516432787))
+            import re
+            comment_link_pattern = r'\[#\d+\s+\(comment\)\]\(https://github\.com/[^/]+/[^/]+/issues/\d+#issuecomment-(\d+)\)'
+            match = re.search(comment_link_pattern, comment_body)
+
+            if not match:
+                self.logger.debug(f"未找到評分來源連結，可能不是回覆評分的評論")
+                return False
+
+            # 獲取被回覆的評論 ID
+            replied_comment_id = match.group(1)
+            self.logger.info(f"檢測到對評分結果的回覆: 原始評論 ID={replied_comment_id}, 回覆者={author}")
+
+            # 查找對應的評分記錄
+            score_records = self.db.get_score_by_comment_id(repo_name, issue_number, int(replied_comment_id))
+            if not score_records:
+                self.logger.warning(f"未找到對應的評分記錄: repo={repo_name}, issue={issue_number}, comment={replied_comment_id}")
+                return False
+
+            score_record = score_records[0]  # 取第一筆
+            score_id = score_record['score_id']
+
+            # 提取用戶反饋（移除引用部分後的內容）
+            lines = comment_body.split('\n')
+            feedback_lines = []
+            in_quote = False
+
+            for line in lines:
+                if line.strip().startswith('>'):
+                    in_quote = True
+                    continue
+                elif in_quote and line.strip() == '':
+                    # 空行可能是引用結束
+                    continue
+                else:
+                    in_quote = False
+                    if line.strip():
+                        feedback_lines.append(line.strip())
+
+            feedback_text = '\n'.join(feedback_lines).strip()
+
+            if not feedback_text:
+                self.logger.info(f"回覆中沒有額外的反饋內容，跳過")
+                return False
+
+            self.logger.info(f"提取到用戶反饋: {feedback_text[:100]}...")
+
+            # 更新評分記錄，添加用戶反饋
+            self.db.update_score_record(score_id, {'user_feedback': feedback_text})
+
+            # 🎓 觸發反饋分析（異步）
+            threading.Thread(
+                target=self.feedback_analyzer.process_new_feedback,
+                args=(score_id, feedback_text),
+                daemon=True
+            ).start()
+
+            self.logger.info(f"✅ 已提取並保存用戶反饋: score_id={score_id}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"提取反饋時發生錯誤: {e}", exc_info=True)
+            return False
+
     def should_score_issue(self, repo_name: str, event_type: str, action: str) -> bool:
         """判斷是否應該評分此 issue/comment"""
         # 檢查 repository 是否在目標列表中
@@ -639,6 +826,28 @@ class IssueScorerService:
             issue_url = comment_data.get('html_url', '')
             comment_id = comment_data.get('id')
 
+            # 🎓 優先檢查是否為對評分結果的回覆（提取反饋）
+            # 即使是機器人自己的評論，如果是回覆評分的，也要提取反饋
+            feedback_extracted = self._extract_feedback_from_reply(body, repo_name, issue_number, author)
+            if feedback_extracted:
+                self.logger.info(f"檢測到對評分結果的回覆，已提取反饋 (repo={repo_name}, issue={issue_number}, comment={comment_id})")
+                return {
+                    'status': 'feedback_extracted',
+                    'message': '已從回覆中提取用戶反饋'
+                }
+
+            # 🔒 檢查是否為機器人自己的評論(避免無限循環)
+            try:
+                authenticated_user = self.github.get_user().login
+                if author == authenticated_user:
+                    self.logger.info(f"跳過評分：評論來自機器人自己 ({author})")
+                    return {
+                        'status': 'skipped',
+                        'message': f'評論來自機器人自己 ({author})'
+                    }
+            except Exception as e:
+                self.logger.warning(f"無法獲取當前用戶名: {e}")
+
             # 🔒 檢查是否包含跳過評分的標記
             if body and '<!--skip for ai audit-->' in body:
                 self.logger.info(f"跳過評分：評論包含 skip for ai audit 標記 (repo={repo_name}, issue={issue_number}, comment={comment_id})")
@@ -654,6 +863,37 @@ class IssueScorerService:
                     'status': 'skipped',
                     'message': '評論包含機器人評分標記'
                 }
+
+            # 🔒 檢查 comment 是否已經被評分過（防止重複評分）
+            if self.scorer_config.get('prevent_duplicate_scoring', True):
+                if comment_id and self.db.check_comment_already_scored(repo_name, issue_number, comment_id):
+                    self.logger.info(f"跳過評分：此評論已經被評分過 (repo={repo_name}, issue={issue_number}, comment={comment_id})")
+                    return {
+                        'status': 'skipped',
+                        'message': '此評論已經被評分過'
+                    }
+
+            # 🔒 過濾簡短評論：只有一行字且不是特定人員
+            # 特定人員的評論即使很短也要評分
+            whitelist_authors = self.scorer_config.get('whitelist_authors', ['IS-Jason', 'IS-Miranda', 'IS-Yan'])
+            max_length = self.scorer_config.get('max_comment_length', 100)
+
+            if body and author not in whitelist_authors:
+                # 移除 HTML 註解、空白行、Markdown 標記後檢查是否只有一行
+                # 移除 HTML 註解
+                cleaned_body = re.sub(r'<!--.*?-->', '', body, flags=re.DOTALL)
+                # 移除前後空白
+                cleaned_body = cleaned_body.strip()
+                # 分割成行並移除空行
+                lines = [line.strip() for line in cleaned_body.split('\n') if line.strip()]
+
+                # 如果只有一行且長度很短，跳過評分
+                if len(lines) == 1 and len(cleaned_body) <= max_length:
+                    self.logger.info(f"跳過評分：評論只有一行且很短 (repo={repo_name}, issue={issue_number}, comment={comment_id}, author={author}, length={len(cleaned_body)})")
+                    return {
+                        'status': 'skipped',
+                        'message': f'評論太短（{len(cleaned_body)} 字元），不納入評分'
+                    }
 
             # ✅ 所有評論都進行評分（移除過濾邏輯）
             self.logger.info(f"準備評分評論: repo={repo_name}, issue={issue_number}, comment={comment_id}")
@@ -852,9 +1092,18 @@ def update_feedback(score_id):
         })
 
         if success:
+            # 🎓 自動分析反饋並更新學習模式
+            if feedback.strip():
+                service.logger.info(f"開始分析反饋: {score_id}")
+                threading.Thread(
+                    target=service.feedback_analyzer.process_new_feedback,
+                    args=(score_id, feedback),
+                    daemon=True
+                ).start()
+
             return jsonify({
                 'status': 'success',
-                'message': '反饋已更新'
+                'message': '反饋已更新並開始分析'
             })
         else:
             return jsonify({
@@ -916,6 +1165,193 @@ def delete_score(score_id):
 
     except Exception as e:
         service.logger.error(f"刪除評分記錄失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/feedback/statistics', methods=['GET'])
+def get_feedback_statistics():
+    """獲取反饋統計數據"""
+    try:
+        days = int(request.args.get('days', 30))
+        stats = service.feedback_analyzer.get_feedback_statistics(days=days)
+
+        return jsonify({
+            'status': 'success',
+            'data': stats
+        })
+
+    except Exception as e:
+        service.logger.error(f"獲取反饋統計失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/feedback/insights', methods=['GET'])
+def get_feedback_insights():
+    """獲取反饋學習見解（用於顯示給用戶）"""
+    try:
+        days = int(request.args.get('days', 30))
+        min_occurrences = int(request.args.get('min_occurrences', 2))
+
+        insights = service.feedback_analyzer.get_feedback_insights(
+            days=days,
+            min_occurrences=min_occurrences
+        )
+
+        return jsonify({
+            'status': 'success',
+            'data': insights
+        })
+
+    except Exception as e:
+        service.logger.error(f"獲取反饋見解失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/feedback/snapshot', methods=['POST'])
+def create_feedback_snapshot():
+    """手動創建反饋快照（也可以通過 cron 定期執行）"""
+    try:
+        snapshot_id = service.feedback_analyzer.create_feedback_snapshot()
+
+        if snapshot_id:
+            return jsonify({
+                'status': 'success',
+                'snapshot_id': snapshot_id,
+                'message': '快照已創建'
+            })
+        else:
+            return jsonify({
+                'status': 'info',
+                'message': '沒有新反饋，未創建快照'
+            })
+
+    except Exception as e:
+        service.logger.error(f"創建反饋快照失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/feedback/patterns', methods=['GET'])
+def get_feedback_patterns():
+    """獲取所有反饋模式"""
+    try:
+        days = int(request.args.get('days', 30))
+        min_occurrences = int(request.args.get('min_occurrences', 1))
+
+        with service.db._get_connection() as conn:
+            cursor = conn.cursor()
+
+            from datetime import timedelta
+            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+            cursor.execute("""
+                SELECT * FROM feedback_patterns
+                WHERE last_seen >= ? AND occurrence_count >= ?
+                ORDER BY occurrence_count DESC
+            """, (cutoff_date, min_occurrences))
+
+            patterns = [dict(row) for row in cursor.fetchall()]
+
+            # 解析 JSON 字段
+            for pattern in patterns:
+                if pattern.get('example_feedbacks'):
+                    pattern['example_feedbacks'] = json.loads(pattern['example_feedbacks'])
+
+            return jsonify({
+                'status': 'success',
+                'data': patterns,
+                'total': len(patterns)
+            })
+
+    except Exception as e:
+        service.logger.error(f"獲取反饋模式失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/feedback/list', methods=['GET'])
+def get_feedback_list():
+    """獲取反饋列表（包含詳細資訊）"""
+    try:
+        days = int(request.args.get('days', 30))
+        limit = int(request.args.get('limit', 50))
+
+        with service.db._get_connection() as conn:
+            cursor = conn.cursor()
+
+            from datetime import timedelta
+            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+            cursor.execute("""
+                SELECT
+                    score_id,
+                    repo_name,
+                    issue_number,
+                    author,
+                    overall_score,
+                    user_feedback,
+                    created_at,
+                    issue_url
+                FROM issue_scores
+                WHERE user_feedback IS NOT NULL
+                AND user_feedback != ''
+                AND created_at >= ?
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (cutoff_date, limit))
+
+            feedbacks = []
+            for row in cursor.fetchall():
+                feedbacks.append({
+                    'score_id': row['score_id'],
+                    'repo_name': row['repo_name'],
+                    'issue_number': row['issue_number'],
+                    'author': row['author'],
+                    'overall_score': row['overall_score'],
+                    'user_feedback': row['user_feedback'],
+                    'created_at': row['created_at'],
+                    'issue_url': row['issue_url']
+                })
+
+            return jsonify({
+                'status': 'success',
+                'data': feedbacks,
+                'total': len(feedbacks)
+            })
+
+    except Exception as e:
+        service.logger.error(f"獲取反饋列表失敗: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """獲取評分配置"""
+    try:
+        config = service.get_scorer_config()
+        return jsonify(config), 200
+    except Exception as e:
+        service.logger.error(f"獲取配置失敗: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/config', methods=['POST'])
+def update_config():
+    """更新評分配置"""
+    try:
+        data = request.json
+        success = service.update_scorer_config(data)
+
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': '配置已更新'
+            }), 200
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '配置更新失敗'
+            }), 500
+    except Exception as e:
+        service.logger.error(f"更新配置失敗: {e}")
         return jsonify({"error": str(e)}), 500
 
 
