@@ -618,35 +618,42 @@ class IssueCopier:
             # 處理評論中的 issue 引用 (#數字 -> repo#數字)
             processed_comment_body = self.process_issue_references(comment_body, repo_full_name)
 
-            # 構建評論內容（包含原作者資訊和原始評論連結）
-            # 🔒 只有從 test-Lantech 同步過來的評論才加上跳過評分標記
-            skip_audit_marker = ""
-            if repo_full_name == "Intrising/test-Lantech":
-                skip_audit_marker = "<!--skip for ai audit-->\n\n"
-            synced_comment = skip_audit_marker + f"**{comment_author}** 在原始 issue 留言：\n\n{comment_url}\n\n---\n\n{processed_comment_body}"
-
-            # 檢測評論內容是否包含圖片或附件
-            import re
-            # 檢測 Markdown 圖片語法、HTML img 標籤、或附件連結
-            has_media = bool(
-                re.search(r'!\[([^\]]*)\]\(([^\)]+)\)', comment_body) or  # Markdown 圖片
-                re.search(r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>', comment_body) or  # HTML img
-                re.search(r'https://github\.com/.*?/files/', comment_body)  # GitHub 附件
-            )
-
-            # 只在有圖片/附件時才加上更新提醒
-            if has_media:
-                synced_comment += f"\n\n---\n\n如果有圖片/附件的話，請 @IS-LilithChang 幫忙更新一下圖片/附件，謝謝！"
-
-            # 同步評論到所有目標 issues
+            # 同步評論到所有目標 issues（每個目標處理圖片）
             synced_count = 0
             for target in target_issues:
                 try:
-                    target_repo = self.github.get_repo(target['repo'])
-                    target_issue = target_repo.get_issue(target['number'])
+                    target_repo_name = target['repo']
+                    target_issue_number = target['number']
+
+                    # 為每個目標 repo 處理圖片（上傳到該 repo 的 assets 分支）
+                    if self.reupload_images:
+                        try:
+                            target_comment_body = self.asset_uploader.process_text_images(
+                                repo_full_name=target_repo_name,
+                                text=processed_comment_body,
+                                issue_number=target_issue_number
+                            )
+                            self.logger.info(f"已處理評論中的圖片: {target_repo_name}#{target_issue_number}")
+                        except Exception as e:
+                            self.logger.error(f"處理圖片失敗，使用原始評論: {e}")
+                            target_comment_body = processed_comment_body
+                    else:
+                        target_comment_body = processed_comment_body
+
+                    # 構建評論內容（包含原作者資訊和原始評論連結）
+                    # 🔒 只有從 test-Lantech 同步過來的評論才加上跳過評分標記
+                    skip_audit_marker = ""
+                    if repo_full_name == "Intrising/test-Lantech":
+                        skip_audit_marker = "<!--skip for ai audit-->\n\n"
+
+                    synced_comment = skip_audit_marker + f"**{comment_author}** 在原始 issue 留言：\n\n{comment_url}\n\n---\n\n{target_comment_body}"
+
+                    # 發布評論
+                    target_repo = self.github.get_repo(target_repo_name)
+                    target_issue = target_repo.get_issue(target_issue_number)
                     target_issue.create_comment(synced_comment)
 
-                    self.logger.info(f"已同步評論到 {target['repo']}#{target['number']}")
+                    self.logger.info(f"✅ 已同步評論到 {target_repo_name}#{target_issue_number}")
                     synced_count += 1
 
                 except Exception as e:
