@@ -62,10 +62,17 @@ COPY src/database.py .
 COPY src/gateway.py .
 COPY src/gateway_templates.py .
 COPY src/gateway_routes.py .
+COPY src/issue_copier.py .
+COPY src/github_asset_uploader.py .
+COPY src/issue_scorer_service.py .
+COPY src/start.sh .
 COPY config.yaml .
 
 # 複製 msmtp 配置示例（可選）
 COPY config/msmtprc.example /app/
+
+# 設置啟動腳本權限
+RUN chmod +x /app/start.sh
 
 # 創建必要的目錄
 RUN mkdir -p /var/log/github-monitor /var/lib/github-monitor && \
@@ -87,8 +94,8 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
 # 切換到非 root 用戶
 USER prmonitor
 
-# 暴露端口（如果需要）
-# EXPOSE 8080
+# 暴露端口
+EXPOSE 8080
 
-# 容器啟動命令
-CMD ["python", "pr_monitor.py"]
+# 容器啟動命令（同時啟動 Gateway 和 Monitor）
+CMD ["bash", "start.sh"]

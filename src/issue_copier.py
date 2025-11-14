@@ -330,6 +330,7 @@ class IssueCopier:
                 self.logger.error(f"Assign 給 IS-LilithChang 失敗: {e}")
 
             # 新增評論請更新圖片/附件
+            # 因為私有 repo 的圖片無法自動處理（需要手動重新上傳為 issue 附件）
             try:
                 # 🔒 只有從 test-Lantech 複製過來的才加上跳過評分標記
                 update_comment = "@IS-LilithChang 更新一下圖片/附件"
