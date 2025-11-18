@@ -31,6 +31,7 @@ USER scorer
 # 複製應用程式碼
 COPY --chown=scorer:scorer src/issue_scorer_service.py /app/
 COPY --chown=scorer:scorer src/database.py /app/
+COPY --chown=scorer:scorer src/feedback_analyzer.py /app/
 COPY --chown=scorer:scorer config.yaml /app/
 
 # 暴露端口

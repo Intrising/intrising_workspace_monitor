@@ -377,7 +377,23 @@ class IssueScorerService:
    - 是否合理分配給不同成員
    - Deadline 是否合理
 
-請以 JSON 格式回覆。請用繁體中文提供評估回饋。"""
+請以 JSON 格式回覆，格式如下：
+```json
+{{
+  "format_score": 85,
+  "format_feedback": "評語",
+  "content_score": 90,
+  "content_feedback": "評語",
+  "clarity_score": 80,
+  "clarity_feedback": "評語",
+  "actionability_score": 88,
+  "actionability_feedback": "評語",
+  "overall_score": 86,
+  "suggestions": ["建議1", "建議2"]
+}}
+```
+
+請用繁體中文提供評估回饋，評分要客觀公正。"""
 
             elif content_type == "issue" and issue_type == "request":
                 # Request/Feature 類型的評分標準
@@ -417,7 +433,23 @@ class IssueScorerService:
    - 規格是否可以實現
    - 是否有助於評估開發工作量
 
-請以 JSON 格式回覆。請用繁體中文提供評估回饋。"""
+請以 JSON 格式回覆，格式如下：
+```json
+{{
+  "format_score": 85,
+  "format_feedback": "評語",
+  "content_score": 90,
+  "content_feedback": "評語",
+  "clarity_score": 80,
+  "clarity_feedback": "評語",
+  "actionability_score": 88,
+  "actionability_feedback": "評語",
+  "overall_score": 86,
+  "suggestions": ["建議1", "建議2"]
+}}
+```
+
+請用繁體中文提供評估回饋，評分要客觀公正。"""
 
             elif content_type == "issue" and issue_type == "test":
                 # 測試結果類型的評分標準
@@ -873,29 +905,36 @@ class IssueScorerService:
                         'message': '此評論已經被評分過'
                     }
 
-            # 🔒 過濾簡短評論：只有一行字且不是特定人員
-            # 特定人員的評論即使很短也要評分
-            whitelist_authors = self.scorer_config.get('whitelist_authors', ['IS-Jason', 'IS-Miranda', 'IS-Yan'])
-            max_length = self.scorer_config.get('max_comment_length', 100)
+            # 🔒 檢查評論是否包含應評分的關鍵內容
+            # 只評分包含以下關鍵字的評論：
+            # 1. "Fixed in Version" - 修復報告
+            # 2. "Issue Overview" - 測試結果報告
+            should_score_keywords = [
+                'Fixed in Version',
+                'fixed in version',
+                'Issue Overview',
+                'issue overview',
+                'Test Result',
+                'test result',
+                '測試結果'
+            ]
 
-            if body and author not in whitelist_authors:
-                # 移除 HTML 註解、空白行、Markdown 標記後檢查是否只有一行
-                # 移除 HTML 註解
-                cleaned_body = re.sub(r'<!--.*?-->', '', body, flags=re.DOTALL)
-                # 移除前後空白
-                cleaned_body = cleaned_body.strip()
-                # 分割成行並移除空行
-                lines = [line.strip() for line in cleaned_body.split('\n') if line.strip()]
+            has_scoring_keyword = False
+            if body:
+                for keyword in should_score_keywords:
+                    if keyword in body:
+                        has_scoring_keyword = True
+                        self.logger.info(f"檢測到評分關鍵字: '{keyword}' (repo={repo_name}, issue={issue_number}, comment={comment_id})")
+                        break
 
-                # 如果只有一行且長度很短，跳過評分
-                if len(lines) == 1 and len(cleaned_body) <= max_length:
-                    self.logger.info(f"跳過評分：評論只有一行且很短 (repo={repo_name}, issue={issue_number}, comment={comment_id}, author={author}, length={len(cleaned_body)})")
-                    return {
-                        'status': 'skipped',
-                        'message': f'評論太短（{len(cleaned_body)} 字元），不納入評分'
-                    }
+            if not has_scoring_keyword:
+                self.logger.info(f"跳過評分：評論不包含評分關鍵字 (repo={repo_name}, issue={issue_number}, comment={comment_id})")
+                return {
+                    'status': 'skipped',
+                    'message': '評論不包含需要評分的關鍵內容 (Fixed in Version, Issue Overview, Test Result)'
+                }
 
-            # ✅ 所有評論都進行評分（移除過濾邏輯）
+            # ✅ 評論包含評分關鍵字，準備評分
             self.logger.info(f"準備評分評論: repo={repo_name}, issue={issue_number}, comment={comment_id}")
 
         # 創建評分記錄 - 使用時間戳確保唯一性
