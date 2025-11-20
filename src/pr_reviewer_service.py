@@ -16,6 +16,7 @@ import yaml
 
 # 導入共享模組
 from database import TaskDatabase
+from feedback_analyzer import FeedbackAnalyzer
 
 
 class PRReviewerService:
@@ -45,6 +46,10 @@ class PRReviewerService:
         # PR 審查配置
         self.review_config = self.config.get('review', {})
 
+        # 初始化反饋分析器
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        self.feedback_analyzer = FeedbackAnalyzer(self.db, anthropic_key)
+
         self.logger.info("PR Reviewer 服務初始化完成")
 
     def _load_config(self, config_path: str) -> dict:
@@ -70,8 +75,8 @@ class PRReviewerService:
         self.logger.setLevel(getattr(logging, log_level.upper()))
         self.logger.addHandler(handler)
 
-    def _perform_codex_review(self, repo_name: str, pr_number: int, pr_data: Dict) -> Dict:
-        """使用 Claude CLI 執行 PR 審查"""
+    def _perform_codex_review(self, repo_name: str, pr_number: int, pr_data: Dict, pr_author: str = None) -> Dict:
+        """使用 Claude CLI 執行 PR 審查（包含歷史反饋學習）"""
         import subprocess
         import tempfile
 
@@ -86,6 +91,8 @@ class PRReviewerService:
             pr_title = pr.title
             pr_body = pr.body or "無描述"
             pr_url = pr.html_url
+            if not pr_author:
+                pr_author = pr.user.login
 
             # 獲取改動的文件列表
             files = pr.get_files()
@@ -107,6 +114,27 @@ class PRReviewerService:
                 })
                 total_changes += file.changes
 
+            # 獲取反饋學習見解
+            feedback_insights = self.feedback_analyzer.get_feedback_insights(days=30, min_occurrences=2)
+            feedback_text = ""
+
+            if feedback_insights.get('has_insights'):
+                feedback_text = f"""
+
+## 🎓 用戶反饋學習見解
+
+{feedback_insights['summary']}
+
+"""
+                # 添加通用指導
+                if feedback_insights.get('general_guidance'):
+                    feedback_text += "**最近用戶反饋的重點改進方向**:\n"
+                    for guidance in feedback_insights['general_guidance'][:3]:  # 最多顯示3條
+                        feedback_text += f"{guidance}\n"
+                    feedback_text += "\n"
+
+                feedback_text += "💡 **請根據以上反饋調整審查策略**，確保審查更符合用戶期望和實際情況。\n\n"
+
             # 構建詳細的審查提示
             files_summary = "\n".join([
                 f"- {f['filename']} ({f['status']}, +{f['additions']}/-{f['deletions']})"
@@ -124,13 +152,14 @@ class PRReviewerService:
 - **標題**: {pr_title}
 - **描述**: {pr_body}
 - **URL**: {pr_url}
+- **作者**: {pr_author}
 
 **改動的文件**:
 {files_summary}
 
 **代碼改動內容**:
 {files_diff}
-
+{feedback_text}
 ## 輸出格式要求
 
 請直接提供審查報告內容，使用以下格式（使用繁體中文）：
@@ -291,6 +320,92 @@ class PRReviewerService:
             self.logger.error(f"解析評分失敗: {e}")
             return None
 
+    def _extract_feedback_from_reply(self, comment_body: str, repo_name: str, pr_number: int, author: str) -> bool:
+        """
+        檢測評論是否為對 PR 審查結果的回覆，並提取用戶反饋
+
+        Args:
+            comment_body: 評論內容
+            repo_name: Repository 名稱
+            pr_number: PR 編號
+            author: 評論作者
+
+        Returns:
+            bool: 如果成功提取反饋返回 True，否則返回 False
+        """
+        try:
+            import re
+
+            # 檢查評論是否包含引用的審查結果（Markdown quote block）
+            if not comment_body or '>' not in comment_body:
+                return False
+
+            # 檢查是否引用了 AI Code Review 標記
+            if '🤖 AI Code Review' not in comment_body and 'AI Code Review' not in comment_body:
+                return False
+
+            self.logger.info(f"檢測到對 PR 審查結果的回覆: PR={repo_name}#{pr_number}, 回覆者={author}")
+
+            # 查找對應的審查記錄（最近一次對此 PR 的審查）
+            review_records = self.db.get_all_tasks(limit=10)
+            matching_record = None
+
+            for record in review_records:
+                if (record.get('repo') == repo_name and
+                    record.get('pr_number') == pr_number and
+                    record.get('status') == 'completed'):
+                    matching_record = record
+                    break
+
+            if not matching_record:
+                self.logger.warning(f"未找到對應的審查記錄: repo={repo_name}, pr={pr_number}")
+                return False
+
+            task_id = matching_record['task_id']
+
+            # 提取用戶反饋（移除引用部分後的內容）
+            lines = comment_body.split('\n')
+            feedback_lines = []
+            in_quote = False
+
+            for line in lines:
+                if line.strip().startswith('>'):
+                    in_quote = True
+                    continue
+                elif in_quote and line.strip() == '':
+                    # 空行可能是引用結束
+                    continue
+                else:
+                    in_quote = False
+                    if line.strip() and '🤖 AI Code Review' not in line:
+                        feedback_lines.append(line.strip())
+
+            feedback_text = '\n'.join(feedback_lines).strip()
+
+            if not feedback_text:
+                self.logger.info(f"回覆中沒有額外的反饋內容，跳過")
+                return False
+
+            self.logger.info(f"提取到用戶反饋: {feedback_text[:100]}...")
+
+            # 更新審查記錄，添加用戶反饋
+            self.db.update_task(task_id, {'user_feedback': feedback_text})
+
+            # 🎓 觸發反饋分析（異步）
+            import threading
+            threading.Thread(
+                target=self.feedback_analyzer.process_new_feedback,
+                args=(task_id, feedback_text),
+                daemon=True
+            ).start()
+
+            self.logger.info(f"✅ 已提取並保存用戶反饋: task_id={task_id}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"提取反饋時發生錯誤: {e}", exc_info=True)
+            return False
+
     def should_review_pr(self, pr_data: Dict) -> bool:
         """判斷是否應該審查此 PR"""
         # 檢查是否是 draft PR
@@ -350,8 +465,11 @@ class PRReviewerService:
                 'message': '正在審查 PR...'
             })
 
+            # 獲取 PR 作者
+            pr_author = pr_data.get('user', {}).get('login', '')
+
             # 執行 Claude 審查
-            review_result = self._perform_codex_review(repo_name, pr_number, pr_data)
+            review_result = self._perform_codex_review(repo_name, pr_number, pr_data, pr_author)
 
             if review_result['success']:
                 review_content = review_result['content']
@@ -419,6 +537,58 @@ class PRReviewerService:
                 "error": str(e)
             }
 
+    def process_comment_event(self, event_type: str, payload: Dict) -> Dict:
+        """處理 PR 評論事件（提取用戶對審查的反饋）"""
+        try:
+            action = payload.get('action', '')
+            comment = payload.get('comment', {})
+            issue = payload.get('issue', {})
+            repo_name = payload.get('repository', {}).get('full_name', '')
+
+            # 檢查是否是 PR (issue 有 pull_request 欄位)
+            if 'pull_request' not in issue:
+                return {"status": "skipped", "reason": "Not a PR comment"}
+
+            pr_number = issue.get('number')
+            comment_body = comment.get('body', '')
+            author = comment.get('user', {}).get('login', '')
+
+            self.logger.info(f"收到 PR 評論事件: {repo_name}#{pr_number}, action={action}, author={author}")
+
+            # 只處理 created 和 edited 動作
+            if action not in ['created', 'edited']:
+                return {"status": "skipped", "reason": f"action '{action}' not supported"}
+
+            # 檢查是否為機器人自己的評論（避免循環）
+            try:
+                authenticated_user = self.github.get_user().login
+                if author == authenticated_user:
+                    self.logger.info(f"跳過評論：來自機器人自己 ({author})")
+                    return {"status": "skipped", "reason": f"Comment from bot itself ({author})"}
+            except Exception as e:
+                self.logger.warning(f"無法獲取當前用戶名: {e}")
+
+            # 嘗試提取用戶反饋
+            feedback_extracted = self._extract_feedback_from_reply(comment_body, repo_name, pr_number, author)
+
+            if feedback_extracted:
+                return {
+                    'status': 'success',
+                    'message': '已從回覆中提取用戶反饋'
+                }
+            else:
+                return {
+                    'status': 'skipped',
+                    'message': '評論不是對審查結果的回覆'
+                }
+
+        except Exception as e:
+            self.logger.error(f"處理評論事件失敗: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
 
 # Flask 應用
 app = Flask(__name__)
@@ -437,16 +607,19 @@ def health_check():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """接收 PR webhook"""
+    """接收 PR 和評論 webhook"""
     try:
         event_type = request.headers.get('X-GitHub-Event', '')
         payload = request.json
 
-        if event_type != 'pull_request':
-            return jsonify({"error": "Invalid event type"}), 400
-
-        result = service.process_pr_event(event_type, payload)
-        return jsonify(result), 200
+        if event_type == 'pull_request':
+            result = service.process_pr_event(event_type, payload)
+            return jsonify(result), 200
+        elif event_type == 'issue_comment':
+            result = service.process_comment_event(event_type, payload)
+            return jsonify(result), 200
+        else:
+            return jsonify({"error": f"Unsupported event type: {event_type}"}), 400
 
     except Exception as e:
         service.logger.error(f"Webhook 處理失敗: {e}", exc_info=True)

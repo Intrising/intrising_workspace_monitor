@@ -74,6 +74,22 @@ class TaskDatabase:
                     # 欄位可能已存在，忽略錯誤
                     pass
 
+                # 為現有記錄添加 user_feedback 欄位（用於存儲用戶對審查的回應）
+                try:
+                    cursor.execute("ALTER TABLE review_tasks ADD COLUMN user_feedback TEXT")
+                    self.logger.info("已為 review_tasks 表添加 user_feedback 欄位")
+                except Exception as e:
+                    # 欄位可能已存在，忽略錯誤
+                    pass
+
+                # 為現有記錄添加 review_comment_id 欄位（用於追蹤評論 ID）
+                try:
+                    cursor.execute("ALTER TABLE review_tasks ADD COLUMN review_comment_id INTEGER")
+                    self.logger.info("已為 review_tasks 表添加 review_comment_id 欄位")
+                except Exception as e:
+                    # 欄位可能已存在，忽略錯誤
+                    pass
+
                 # 創建索引以加速查詢
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_status
